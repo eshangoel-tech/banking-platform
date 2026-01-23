@@ -29,7 +29,19 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 # Import all models here to ensure they are registered with Base.metadata
-# from app.models import *  # Uncomment when models are created
+from app.common.models import (  # noqa: F401
+    AIRequest,
+    Account,
+    AuditEvent,
+    AuthSession,
+    LedgerEntry,
+    Loan,
+    LoanDraft,
+    Notification,
+    Payment,
+    RuleEvaluation,
+    User,
+)
 
 target_metadata = Base.metadata
 
