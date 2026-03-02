@@ -7,7 +7,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.common.db.base import Base
+from app.repository.base import Base
 
 # Load environment variables
 load_dotenv()
@@ -29,18 +29,19 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 # Import all models here to ensure they are registered with Base.metadata
-from app.common.models import (  # noqa: F401
-    AIRequest,
-    Account,
-    AuditEvent,
-    AuthSession,
-    LedgerEntry,
-    Loan,
-    LoanDraft,
-    Notification,
-    Payment,
-    RuleEvaluation,
+from app.repository.models import (  # noqa: F401
     User,
+    Account,
+    LedgerEntry,
+    Session,
+    OtpVerification,
+    Loan,
+    LoanSimulation,
+    RequestLog,
+    AuditLog,
+    ErrorLog,
+    ExternalServiceLog,
+    AIInteraction,
 )
 
 target_metadata = Base.metadata
