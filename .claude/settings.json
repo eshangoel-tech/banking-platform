@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \":*)"
+    ],
+    "additionalDirectories": [
+      "/home/eshan/banking-platform",
+      "/home/eshan/.claude/projects/-home-eshan-banking-platform/memory"
+    ]
+  }
+}

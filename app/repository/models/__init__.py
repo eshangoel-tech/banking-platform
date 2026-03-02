@@ -11,6 +11,7 @@ from app.repository.models.audit_log import AuditLog
 from app.repository.models.error_log import ErrorLog
 from app.repository.models.external_service_log import ExternalServiceLog
 from app.repository.models.ai_interaction import AIInteraction
+from app.repository.models.verified_email import VerifiedEmail
 
 __all__ = [
     "User",
@@ -25,5 +26,6 @@ __all__ = [
     "ErrorLog",
     "ExternalServiceLog",
     "AIInteraction",
+    "VerifiedEmail",
 ]
 

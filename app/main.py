@@ -1,15 +1,16 @@
 from fastapi import FastAPI, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
 import asyncio
 import logging
 import traceback
 import uuid
 
 from app.common.logging import setup_logging
-from app.repository.session import get_db, SessionLocal
+from app.repository.session import get_db, AsyncSessionLocal
 from app.repository.models.error_log import ErrorLog
 from app.api.middleware import HttpLoggingMiddleware
+from app.api.v1.core.auth.routes import router as auth_v1_router
+from app.common.utils.exceptions import AppException
 
 # Initialize logging
 setup_logging()
@@ -23,6 +24,9 @@ app = FastAPI(
 
 # HTTP logging middleware
 app.add_middleware(HttpLoggingMiddleware)
+
+# API routers
+app.include_router(auth_v1_router, prefix="/api/v1/auth", tags=["auth"])
 
 
 @app.on_event("startup")
@@ -56,6 +60,20 @@ def health_check():
     }
 
 
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", uuid.uuid4())
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={
+            "success": False,
+            "message": exc.message,
+            "data": {"code": exc.code},
+            "request_id": str(request_id),
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
@@ -71,9 +89,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     user_id = getattr(request.state, "user_id", None)
 
     async def _persist_error_log() -> None:
-        def _sync_persist() -> None:
-            db = SessionLocal()
-            try:
+        try:
+            async with AsyncSessionLocal() as db:
                 log_row = ErrorLog(
                     id=uuid.uuid4(),
                     request_id=request_id,
@@ -85,13 +102,9 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
                     stack_trace=traceback.format_exc(),
                 )
                 db.add(log_row)
-                db.commit()
-            except Exception:
-                logger.exception("Failed to persist error log")
-            finally:
-                db.close()
-
-        await asyncio.to_thread(_sync_persist)
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to persist error log")
 
     # Fire-and-forget persistence
     asyncio.create_task(_persist_error_log())
@@ -113,6 +126,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         content={
             "success": False,
             "message": "Internal server error",
+            "data": None,
             "request_id": str(request_id),
         },
     )

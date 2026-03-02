@@ -12,27 +12,20 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.common.sanitization import sanitize_payload, truncate_payload
-from app.repository.session import SessionLocal
 from app.repository.models.request_log import RequestLog
+from app.repository.session import AsyncSessionLocal
 
 logger = logging.getLogger("http")
 
 
 async def _persist_request_log_async(data: dict) -> None:
-    """Persist a RequestLog row in a background thread."""
-
-    def _sync_persist() -> None:
-        db = SessionLocal()
-        try:
-            log_row = RequestLog(**data)
-            db.add(log_row)
-            db.commit()
-        except Exception:
-            logger.exception("Failed to persist request log")
-        finally:
-            db.close()
-
-    await asyncio.to_thread(_sync_persist)
+    """Persist a RequestLog row asynchronously."""
+    try:
+        async with AsyncSessionLocal() as db:
+            db.add(RequestLog(**data))
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to persist request log")
 
 
 class HttpLoggingMiddleware(BaseHTTPMiddleware):

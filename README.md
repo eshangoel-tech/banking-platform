@@ -13,31 +13,40 @@ Production-style digital banking backend (ADX Bank).
 banking-platform/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI app factory / entry
-│   ├── api/                    # HTTP routes (views + URLs)
-│   ├── schemas/                # Pydantic request/response models
-│   ├── services/               # Business services
-│   │   ├── core/               # Core banking services
-│   │   └── ai/                 # AI-specific services
-│   ├── repository/             # DB models + DB access
+│   ├── main.py                     # FastAPI app factory / entry
+│   ├── api/                        # HTTP routes (views + URLs)
+│   ├── schemas/                    # Pydantic request/response models
+│   ├── services/                   # Business services
+│   │   ├── core/                   # Core banking services
+│   │   └── ai/                     # AI-specific services
+│   ├── repository/                 # DB models + DB access
 │   │   ├── base.py
 │   │   ├── mixins.py
 │   │   ├── session.py
-│   │   └── models/             # SQLAlchemy models (tables)
-│   ├── tasks/                  # Celery tasks
-│   ├── common/                 # Shared utilities, logging, constants
+│   │   └── models/                 # SQLAlchemy models (tables)
+│   ├── tasks/                      # Celery tasks
+│   ├── common/                     # Shared utilities, logging, constants
 │   │   ├── logging.py
-│   │   ├── constants/          # enums, limits, messages
-│   │   └── responses/          # API response helpers
-│   └── config/                 # Configuration (security, Redis, settings)
-├── migrations/                 # Alembic
+│   │   ├── sanitization.py         # Payload redaction + truncation for logs
+│   │   ├── constants/              # enums, limits, messages
+│   │   ├── responses/              # API response helpers
+│   │   └── utils/                  # Cross-cutting utility functions
+│   │       ├── security.py         # bcrypt password hashing + JWT (single source of truth)
+│   │       ├── otp.py              # OTP generation/hashing + SMTP email delivery
+│   │       └── exceptions.py       # AppException base class + all factory helpers
+│   └── config/                     # Configuration (Redis, settings)
+├── migrations/                     # Alembic
 ├── tests/
-├── scripts/                    # One-off / CLI scripts
+├── scripts/                        # One-off / CLI scripts
 ├── .env
 ├── requirements.txt
-├── docker-compose.yml          # (optional) local Postgres/Redis
+├── docker-compose.yml              # (optional) local Postgres/Redis
 └── README.md
 ```
+
+> **Rule:** anything consumed by more than one API module (or likely to be) lives in `app/common/utils/`.
+> Old locations (`app/core/security.py`, `app/config/security.py`, `app/services/core/auth_service/otp_manager.py`,
+> `app/services/core/auth_service/exceptions.py`) are now thin re-export shims pointing here.
 
 ## Database structure (current)
 
@@ -52,6 +61,7 @@ Defined in **`app/repository/models/`** and applied via **Alembic** in `migratio
 | **ledger_entries**    | Financial source of truth        | id (UUID), account_id (FK), entry_type, amount, balance_after, reference_type, reference_id, description, created_at (indexed) |
 | **sessions**          | User sessions                    | id (UUID), user_id (FK), session_meta (JSONB), ip_address, user_agent, is_active, expires_at (indexed), created_at |
 | **otp_verifications** | OTP lifecycle                    | id (UUID), user_id (FK, nullable), otp_hash, otp_type, attempts, max_attempts, expires_at (indexed), status, created_at |
+| **verified_emails**   | Pre-verified email addresses     | id (UUID), email (unique), created_at |
 | **loans**             | Loan contracts                   | id (UUID), user_id (FK), account_id (FK), principal_amount, interest_rate, tenure_months, emi_amount, outstanding_amount, status, approved_at, created_at, updated_at |
 | **loan_simulations**  | Loan slider tracking             | id (UUID), user_id (FK), session_id (FK), tested_amount, tested_tenure, calculated_emi, created_at |
 
@@ -84,7 +94,11 @@ Defined in **`app/repository/models/`** and applied via **Alembic** in `migratio
 ## What’s built so far
 
 - **FastAPI app** in `app/main.py`: health check at `/health`, OpenAPI at `/docs` and `/redoc`.
-- **Config**: `app/config/` — JWT security helpers, Redis client; logging in `app/common/logging.py`.
+- **Config**: `app/config/` — Redis client; logging in `app/common/logging.py`.
+- **Common utils** (`app/common/utils/`):
+  - `security.py` — `hash_password`, `verify_password`, `create_access_token`, `verify_token` (HS256 JWT). Single source of truth; `app/core/security.py` and `app/config/security.py` re-export from here.
+  - `otp.py` — `generate_otp` (CSPRNG 6-digit), `hash_otp` / `verify_otp_hash` (SHA-256), and `send_otp_email` (async SMTP via aiosmtplib with STARTTLS, HTML + plain-text template). Old `otp_manager.py` re-exports from here.
+  - `exceptions.py` — `AppException` dataclass + factory helpers for every error code (auth, OTP, token, generic). Old `auth_service/exceptions.py` re-exports from here.
 - **Database / repository**: SQLAlchemy in `app/repository/` — base, session (`get_db`), and the banking + logging schema described above.
 - **Alembic**: Migration environment configured to use `app.repository.Base` and import all models from `app.repository.models`.
 - **Logging architecture**:
@@ -104,11 +118,63 @@ Defined in **`app/repository/models/`** and applied via **Alembic** in `migratio
   - `truncate_payload(payload, max_bytes)` ensures large payloads aren’t stored in full
 - **Placeholders**: `app/api/`, `app/schemas/`, `app/services/core/`, `app/services/ai/`, `app/tasks/` are present for future use.
 
+## Auth module (v1) — implemented
+
+Endpoints:
+
+- `POST /api/v1/auth/register`
+  - Validates email + phone uniqueness
+  - Hashes password using **bcrypt**
+  - Creates user with `status=INACTIVE`, `kyc_status=PENDING`
+  - Generates a 6-digit OTP, stores only **SHA256 hash** in `otp_verifications`
+  - OTP expires in **5 minutes**, max attempts **3**
+  - **Sends OTP to the registered email via SMTP** (HTML + plain-text, STARTTLS)
+
+- `POST /api/v1/auth/verify-email`
+  - Validates OTP, expiry, and attempts
+  - Marks OTP as VERIFIED
+  - Activates user (`status=ACTIVE`, `kyc_status=VERIFIED`)
+  - Creates an account automatically (`account_type=CURRENT`, `balance=0`)
+
+Clean architecture locations:
+
+- **Routes (view layer)**: `app/api/v1/core/auth/routes.py`
+- **Schemas**: `app/schemas/auth.py`
+- **Service layer**: `app/services/core/auth_service/service.py`
+- **Repository layer**: `app/repository/core/auth_repository/repository.py`
+- **OTP utils + SMTP delivery**: `app/common/utils/otp.py`
+- **Password hashing + JWT**: `app/common/utils/security.py`
+- **Exceptions**: `app/common/utils/exceptions.py`
+
 ## Run locally
 
 ```bash
-# Set .env (e.g. DATABASE_URL, REDIS_URL, JWT_SECRET)
+# Copy and fill in .env
+cp .env.example .env
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Apply DB migrations
+alembic upgrade head
+
+# Start server
 uvicorn app.main:app --reload
 ```
 
 Health: `GET /health`. Docs: `GET /docs`.
+
+## SMTP configuration
+
+Set the following in `.env` to enable OTP email delivery:
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=noreply@adxbank.com
+SMTP_PASSWORD=your_app_password
+SMTP_FROM_EMAIL=noreply@adxbank.com
+SMTP_FROM_NAME=ADX Bank
+```
+
+If SMTP is not configured, registration still succeeds but an error is logged and the OTP is not delivered.

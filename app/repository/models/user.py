@@ -80,6 +80,10 @@ class User(Base):
 
     last_login_at = Column(DateTime(timezone=False), nullable=True)
 
+    # Password reset fields
+    reset_token_hash = Column(String(64), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime(timezone=False), nullable=True)
+
     created_at = Column(
         DateTime(timezone=False),
         nullable=False,

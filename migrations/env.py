@@ -42,6 +42,7 @@ from app.repository.models import (  # noqa: F401
     ErrorLog,
     ExternalServiceLog,
     AIInteraction,
+    VerifiedEmail,
 )
 
 target_metadata = Base.metadata
