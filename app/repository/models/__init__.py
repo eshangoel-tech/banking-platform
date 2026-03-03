@@ -12,6 +12,8 @@ from app.repository.models.error_log import ErrorLog
 from app.repository.models.external_service_log import ExternalServiceLog
 from app.repository.models.ai_interaction import AIInteraction
 from app.repository.models.verified_email import VerifiedEmail
+from app.repository.models.transfer import Transfer
+from app.repository.models.payment_order import PaymentOrder
 
 __all__ = [
     "User",
@@ -27,5 +29,7 @@ __all__ = [
     "ExternalServiceLog",
     "AIInteraction",
     "VerifiedEmail",
+    "Transfer",
+    "PaymentOrder",
 ]
 

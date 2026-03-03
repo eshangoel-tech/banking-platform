@@ -60,6 +60,13 @@ class OtpVerification(Base):
         server_default="PENDING",
     )
 
+    # Optional: links OTP to a specific business entity (e.g. transfer_id for TRANSFER OTPs)
+    reference_id = Column(
+        UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+
     created_at = Column(
         DateTime(timezone=False),
         nullable=False,

@@ -1,11 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(pip install \"celery[redis]==5.3.6\" -q)",
+      "Read(//home/eshan/**)",
+      "Bash(npm install)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npm run build)"
     ],
     "additionalDirectories": [
       "/home/eshan/banking-platform",
-      "/home/eshan/.claude/projects/-home-eshan-banking-platform/memory"
+      "/home/eshan/.claude/projects/-home-eshan-banking-platform/memory",
+      "/home/eshan/banking-frontend"
     ]
   }
 }

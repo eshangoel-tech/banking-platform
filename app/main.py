@@ -10,6 +10,10 @@ from app.repository.session import get_db, AsyncSessionLocal
 from app.repository.models.error_log import ErrorLog
 from app.api.middleware import HttpLoggingMiddleware
 from app.api.v1.core.auth.routes import router as auth_v1_router
+from app.api.v1.core.user.routes import router as user_v1_router
+from app.api.v1.core.transfer.routes import router as transfer_v1_router
+from app.api.v1.core.wallet.routes import router as wallet_v1_router
+from app.api.v1.core.loan.routes import router as loan_v1_router
 from app.common.utils.exceptions import AppException
 
 # Initialize logging
@@ -27,6 +31,10 @@ app.add_middleware(HttpLoggingMiddleware)
 
 # API routers
 app.include_router(auth_v1_router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(user_v1_router, prefix="/api/v1", tags=["user"])
+app.include_router(transfer_v1_router, prefix="/api/v1/transfer", tags=["transfer"])
+app.include_router(wallet_v1_router, prefix="/api/v1/wallet", tags=["wallet"])
+app.include_router(loan_v1_router, prefix="/api/v1/loan", tags=["loan"])
 
 
 @app.on_event("startup")

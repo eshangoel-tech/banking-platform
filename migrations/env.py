@@ -43,6 +43,8 @@ from app.repository.models import (  # noqa: F401
     ExternalServiceLog,
     AIInteraction,
     VerifiedEmail,
+    Transfer,
+    PaymentOrder,
 )
 
 target_metadata = Base.metadata

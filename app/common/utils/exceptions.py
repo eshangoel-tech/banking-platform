@@ -74,3 +74,65 @@ def forbidden(message: str = "You do not have permission to perform this action"
 
 def not_found(resource: str = "Resource") -> AppException:
     return AppException(code="NOT_FOUND", message=f"{resource} not found", http_status=404)
+
+
+# ---------------------------------------------------------------------------
+# Transfer
+# ---------------------------------------------------------------------------
+
+def insufficient_balance(message: str = "Insufficient balance to complete the transfer") -> AppException:
+    return AppException(code="INSUFFICIENT_BALANCE", message=message, http_status=422)
+
+
+def self_transfer_not_allowed(message: str = "Cannot transfer to your own account") -> AppException:
+    return AppException(code="SELF_TRANSFER_NOT_ALLOWED", message=message, http_status=400)
+
+
+def account_not_active(message: str = "Account is not active") -> AppException:
+    return AppException(code="ACCOUNT_NOT_ACTIVE", message=message, http_status=400)
+
+
+def transfer_not_found(message: str = "Transfer not found") -> AppException:
+    return AppException(code="TRANSFER_NOT_FOUND", message=message, http_status=404)
+
+
+def transfer_already_completed(message: str = "Transfer has already been processed") -> AppException:
+    return AppException(code="TRANSFER_ALREADY_COMPLETED", message=message, http_status=409)
+
+
+# ---------------------------------------------------------------------------
+# Wallet / Payments
+# ---------------------------------------------------------------------------
+
+def invalid_webhook_signature(message: str = "Webhook signature verification failed") -> AppException:
+    return AppException(code="INVALID_WEBHOOK_SIGNATURE", message=message, http_status=400)
+
+
+def payment_limit_exceeded(message: str = "Amount exceeds the maximum allowed limit") -> AppException:
+    return AppException(code="PAYMENT_LIMIT_EXCEEDED", message=message, http_status=400)
+
+
+def razorpay_order_failed(message: str = "Failed to create payment order") -> AppException:
+    return AppException(code="RAZORPAY_ORDER_FAILED", message=message, http_status=502)
+
+
+# ---------------------------------------------------------------------------
+# Loans
+# ---------------------------------------------------------------------------
+
+def loan_not_eligible(message: str = "You are not eligible for a loan") -> AppException:
+    return AppException(code="LOAN_NOT_ELIGIBLE", message=message, http_status=400)
+
+
+def loan_not_found(message: str = "Loan not found") -> AppException:
+    return AppException(code="LOAN_NOT_FOUND", message=message, http_status=404)
+
+
+def loan_not_active(message: str = "Loan is not active and cannot accept payments") -> AppException:
+    return AppException(code="LOAN_NOT_ACTIVE", message=message, http_status=400)
+
+
+def loan_booking_expired(
+    message: str = "Loan booking has expired. Please start a new booking.",
+) -> AppException:
+    return AppException(code="LOAN_BOOKING_EXPIRED", message=message, http_status=410)
