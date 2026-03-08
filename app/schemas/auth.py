@@ -1,6 +1,7 @@
 """Pydantic schemas for auth module (v1)."""
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, EmailStr, Field
@@ -11,6 +12,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     phone: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=8, max_length=128)
+    salary: Optional[Decimal] = Field(
+        None, ge=0, description="Monthly salary in INR (used for loan eligibility)"
+    )
 
 
 class RegisterResponse(BaseModel):

@@ -74,15 +74,15 @@ class UserService:
             db, account.id, limit=5
         )
 
-        async with db.begin():
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="DASHBOARD_VIEWED",
-                    metadata={},
-                )
+        db.add(
+            self._audit(
+                user_id=user.id,
+                session_id=session_id,
+                event_type="DASHBOARD_VIEWED",
+                metadata={},
             )
+        )
+        await db.commit()
 
         return {
             "user": {
@@ -126,15 +126,15 @@ class UserService:
         if not account:
             raise not_found("Account")
 
-        async with db.begin():
-            db.add(
-                self._audit(
-                    user_id=user_id,
-                    session_id=session_id,
-                    event_type="ACCOUNT_DETAILS_VIEWED",
-                    metadata={"account_id": str(account.id)},
-                )
+        db.add(
+            self._audit(
+                user_id=user_id,
+                session_id=session_id,
+                event_type="ACCOUNT_DETAILS_VIEWED",
+                metadata={"account_id": str(account.id)},
             )
+        )
+        await db.commit()
 
         return {
             "account_number": account.account_number,
@@ -169,15 +169,15 @@ class UserService:
             db, account.id, offset=offset, limit=limit
         )
 
-        async with db.begin():
-            db.add(
-                self._audit(
-                    user_id=user_id,
-                    session_id=session_id,
-                    event_type="TRANSACTIONS_VIEWED",
-                    metadata={"page": page, "limit": limit},
-                )
+        db.add(
+            self._audit(
+                user_id=user_id,
+                session_id=session_id,
+                event_type="TRANSACTIONS_VIEWED",
+                metadata={"page": page, "limit": limit},
             )
+        )
+        await db.commit()
 
         return {
             "total_records": total,
@@ -218,21 +218,21 @@ class UserService:
             if existing is not None and existing.id != user.id:
                 raise user_already_exists("Phone number already in use")
 
-        async with db.begin():
-            await self.repo.update_user_profile(
-                db,
-                user.id,
-                phone=phone if phone_changed else None,
-                address=address if address_changed else None,
+        await self.repo.update_user_profile(
+            db,
+            user.id,
+            phone=phone if phone_changed else None,
+            address=address if address_changed else None,
+        )
+        db.add(
+            self._audit(
+                user_id=user.id,
+                session_id=session_id,
+                event_type="PROFILE_UPDATED",
+                metadata={
+                    "phone_changed": phone_changed,
+                    "address_changed": address_changed,
+                },
             )
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="PROFILE_UPDATED",
-                    metadata={
-                        "phone_changed": phone_changed,
-                        "address_changed": address_changed,
-                    },
-                )
-            )
+        )
+        await db.commit()

@@ -1,7 +1,7 @@
 """Error log model."""
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, func, Index
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, func, Index
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.repository.base import Base
@@ -45,7 +45,7 @@ class ErrorLog(Base):
     path = Column(String(255), nullable=False)
     method = Column(String(10), nullable=False)
 
-    error_message = Column(String(512), nullable=False)
+    error_message = Column(Text, nullable=False)
     stack_trace = Column(String, nullable=False)
 
     created_at = Column(

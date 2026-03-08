@@ -10,10 +10,11 @@ from app.repository.models.request_log import RequestLog
 from app.repository.models.audit_log import AuditLog
 from app.repository.models.error_log import ErrorLog
 from app.repository.models.external_service_log import ExternalServiceLog
-from app.repository.models.ai_interaction import AIInteraction
 from app.repository.models.verified_email import VerifiedEmail
 from app.repository.models.transfer import Transfer
-from app.repository.models.payment_order import PaymentOrder
+from app.repository.models.chat_session import ChatSession
+from app.repository.models.chat_response import ChatResponse
+from app.repository.models.llm_interaction import LLMInteraction
 
 __all__ = [
     "User",
@@ -27,9 +28,9 @@ __all__ = [
     "AuditLog",
     "ErrorLog",
     "ExternalServiceLog",
-    "AIInteraction",
     "VerifiedEmail",
     "Transfer",
-    "PaymentOrder",
+    "ChatSession",
+    "ChatResponse",
+    "LLMInteraction",
 ]
-

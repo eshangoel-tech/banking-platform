@@ -139,15 +139,15 @@ class LoanService:
         emi = _calculate_emi(amount, _LOAN_INTEREST_RATE, tenure_months)
         total_payable = (emi * tenure_months).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        async with db.begin():
-            await self.repo.create_loan_simulation(
-                db,
-                user_id=user.id,
-                session_id=session_id,
-                tested_amount=amount,
-                tested_tenure=tenure_months,
-                calculated_emi=emi,
-            )
+        await self.repo.create_loan_simulation(
+            db,
+            user_id=user.id,
+            session_id=session_id,
+            tested_amount=amount,
+            tested_tenure=tenure_months,
+            calculated_emi=emi,
+        )
+        await db.commit()
 
         return {
             "amount": str(amount),
@@ -199,26 +199,26 @@ class LoanService:
         otp_hash = hash_otp(otp_plain)
         expires_at = datetime.utcnow() + timedelta(minutes=5)
 
-        async with db.begin():
-            await self.repo.create_loan_otp(
-                db,
+        await self.repo.create_loan_otp(
+            db,
+            user_id=user.id,
+            otp_hash=otp_hash,
+            expires_at=expires_at,
+            booking_id=UUID(booking_id),
+        )
+        db.add(
+            self._audit(
                 user_id=user.id,
-                otp_hash=otp_hash,
-                expires_at=expires_at,
-                booking_id=UUID(booking_id),
+                session_id=session_id,
+                event_type="LOAN_BOOK_INITIATED",
+                metadata={
+                    "booking_id": booking_id,
+                    "amount": str(amount),
+                    "tenure_months": tenure_months,
+                },
             )
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="LOAN_BOOK_INITIATED",
-                    metadata={
-                        "booking_id": booking_id,
-                        "amount": str(amount),
-                        "tenure_months": tenure_months,
-                    },
-                )
-            )
+        )
+        await db.commit()
 
         # Send OTP (best-effort)
         try:
@@ -279,30 +279,30 @@ class LoanService:
             raise invalid_otp()
 
         # Atomically create loan + mark OTP verified + audit
-        async with db.begin():
-            loan = await self.repo.create_loan(
-                db,
+        loan = await self.repo.create_loan(
+            db,
+            user_id=user.id,
+            account_id=UUID(booking["account_id"]),
+            principal_amount=Decimal(booking["amount"]),
+            interest_rate=_LOAN_INTEREST_RATE,
+            tenure_months=int(booking["tenure_months"]),
+            emi_amount=Decimal(booking["emi_amount"]),
+        )
+        await self.repo.mark_otp_verified(db, otp_record.id)
+        db.add(
+            self._audit(
                 user_id=user.id,
-                account_id=UUID(booking["account_id"]),
-                principal_amount=Decimal(booking["amount"]),
-                interest_rate=_LOAN_INTEREST_RATE,
-                tenure_months=int(booking["tenure_months"]),
-                emi_amount=Decimal(booking["emi_amount"]),
+                session_id=session_id,
+                event_type="LOAN_CONFIRMED",
+                metadata={
+                    "loan_id": str(loan.id),
+                    "booking_id": booking_id,
+                    "amount": booking["amount"],
+                    "tenure_months": booking["tenure_months"],
+                },
             )
-            await self.repo.mark_otp_verified(db, otp_record.id)
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="LOAN_CONFIRMED",
-                    metadata={
-                        "loan_id": str(loan.id),
-                        "booking_id": booking_id,
-                        "amount": booking["amount"],
-                        "tenure_months": booking["tenure_months"],
-                    },
-                )
-            )
+        )
+        await db.commit()
 
         # Clean up booking key
         await asyncio.to_thread(redis.delete, _booking_key(booking_id))
@@ -373,54 +373,54 @@ class LoanService:
         # Pay the smaller of EMI or remaining outstanding
         payment_amount = min(loan.emi_amount, loan.outstanding_amount)
 
-        async with db.begin():
-            # Lock the account row
-            account = await self.repo.get_account_for_update(db, loan.account_id)
-            if account is None:
-                raise not_found("Account")
+        # Lock the account row (implicit transaction already open from reads above)
+        account = await self.repo.get_account_for_update(db, loan.account_id)
+        if account is None:
+            raise not_found("Account")
 
-            if account.balance < payment_amount:
-                raise insufficient_balance(
-                    "Insufficient wallet balance to pay loan EMI. Please add money first."
-                )
-
-            # Atomic debit + new balance via RETURNING
-            new_balance = await self.repo.debit_account_balance(
-                db, account.id, payment_amount
+        if account.balance < payment_amount:
+            raise insufficient_balance(
+                "Insufficient wallet balance to pay loan EMI. Please add money first."
             )
 
-            # Update loan outstanding; close if fully repaid
-            new_outstanding = loan.outstanding_amount - payment_amount
-            new_status = "CLOSED" if new_outstanding <= 0 else "ACTIVE"
-            await self.repo.update_loan_outstanding(
-                db, loan.id, new_outstanding, status=new_status
-            )
+        # Atomic debit + new balance via RETURNING
+        new_balance = await self.repo.debit_account_balance(
+            db, account.id, payment_amount
+        )
 
-            # Ledger entry
-            await self.repo.create_ledger_entry(
-                db,
-                account_id=account.id,
-                entry_type="DEBIT",
-                amount=payment_amount,
-                balance_after=new_balance,
-                reference_type="LOAN_PAYMENT",
-                reference_id=loan.id,
-                description=f"EMI payment for loan {loan.id}",
-            )
+        # Update loan outstanding; close if fully repaid
+        new_outstanding = loan.outstanding_amount - payment_amount
+        new_status = "CLOSED" if new_outstanding <= 0 else "ACTIVE"
+        await self.repo.update_loan_outstanding(
+            db, loan.id, new_outstanding, status=new_status
+        )
 
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="LOAN_PAYMENT_MADE",
-                    metadata={
-                        "loan_id": str(loan.id),
-                        "amount_paid": str(payment_amount),
-                        "outstanding_after": str(new_outstanding),
-                        "loan_status": new_status,
-                    },
-                )
+        # Ledger entry
+        await self.repo.create_ledger_entry(
+            db,
+            account_id=account.id,
+            entry_type="DEBIT",
+            amount=payment_amount,
+            balance_after=new_balance,
+            reference_type="LOAN_PAYMENT",
+            reference_id=loan.id,
+            description=f"EMI payment for loan {loan.id}",
+        )
+
+        db.add(
+            self._audit(
+                user_id=user.id,
+                session_id=session_id,
+                event_type="LOAN_PAYMENT_MADE",
+                metadata={
+                    "loan_id": str(loan.id),
+                    "amount_paid": str(payment_amount),
+                    "outstanding_after": str(new_outstanding),
+                    "loan_status": new_status,
+                },
             )
+        )
+        await db.commit()
 
         return {
             "loan_id": str(loan.id),

@@ -1,0 +1,41 @@
+{
+  "_source": "ADX Bank Loan Policy",
+  "eligibility": {
+    "minimum_age": 21,
+    "minimum_salary": "₹10,000 per month declared at registration",
+    "account_status": "Account must be ACTIVE with completed KYC",
+    "credit_score": "Minimum CIBIL score of 650 required (checked internally)",
+    "max_loan_amount": "Maximum eligible amount is 12 times the declared monthly salary",
+    "max_tenure": "Maximum loan tenure is 24 months",
+    "existing_loans": "Customers with more than 2 active loans are not eligible for a new loan"
+  },
+  "interest_rates": {
+    "personal_loan": "12% per annum (fixed rate)",
+    "rate_type": "Flat reducing balance method",
+    "emi_calculation": "EMI = P × r × (1+r)^n / ((1+r)^n - 1), where r = monthly rate = 12%/12/100"
+  },
+  "booking_process": {
+    "step_1": "Customer requests loan via /loan/book — eligibility is checked and a booking ID is generated (valid 5 minutes)",
+    "step_2": "OTP is sent to registered email for confirmation",
+    "step_3": "Customer confirms via /loan/confirm with booking ID and OTP",
+    "step_4": "Loan is created in PENDING status and auto-approved within seconds via background process",
+    "step_5": "Loan status changes to ACTIVE after approval"
+  },
+  "repayment": {
+    "emi_payment": "EMI payments are made via /loan/{loan_id}/pay endpoint",
+    "payment_deducted_from": "Primary savings account balance",
+    "partial_payment": "Minimum payment is the EMI amount; excess reduces outstanding principal",
+    "loan_closure": "Loan is marked CLOSED when outstanding balance reaches zero",
+    "prepayment_penalty": "No prepayment penalty for personal loans"
+  },
+  "default_policy": {
+    "overdue_definition": "EMI not paid within 30 days of due date",
+    "penalty": "2% additional interest per month on overdue EMI",
+    "npa_classification": "Loan classified as NPA after 90 days of non-payment",
+    "legal_action": "Legal proceedings initiated after NPA classification"
+  },
+  "simulation": {
+    "description": "Customers can simulate loan EMI before booking via /loan/simulate endpoint",
+    "no_commitment": "Simulation does not create any loan obligation"
+  }
+}

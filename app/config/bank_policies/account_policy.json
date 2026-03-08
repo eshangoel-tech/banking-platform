@@ -1,0 +1,32 @@
+{
+  "_source": "ADX Bank Account Policy",
+  "account_opening": {
+    "eligibility": "Any Indian resident aged 18 or above with a valid government-issued ID can open an account.",
+    "required_documents": ["Aadhaar Card or PAN Card for KYC", "Valid email address", "Active mobile number"],
+    "account_types": ["SAVINGS"],
+    "minimum_balance": "No minimum balance required. ADX Bank is a zero-balance account bank.",
+    "activation": "Account is activated only after successful email OTP verification.",
+    "joining_bonus": "Every new account holder receives a ₹500 joining bonus credited immediately upon activation."
+  },
+  "kyc": {
+    "status_values": ["PENDING", "VERIFIED", "REJECTED"],
+    "kyc_required_for": ["Transactions above ₹50,000", "Loan applications", "International transfers"],
+    "kyc_process": "KYC is done during registration via Aadhaar-based verification. Pending KYC users are restricted from high-value operations.",
+    "re_kyc": "Re-KYC is required every 2 years for active accounts."
+  },
+  "account_status": {
+    "active": "Account is operational and all transactions are permitted.",
+    "inactive": "Account registered but email not verified. No transactions allowed.",
+    "dormant": "Account with no transactions for 12 consecutive months. Contact support to reactivate.",
+    "blocked": "Account blocked due to suspicious activity or policy violation. Contact branch."
+  },
+  "salary_credit": {
+    "policy": "Users who declare their salary during registration receive an automatic monthly salary credit 2 minutes after account activation (demo feature).",
+    "no_salary": "If no salary is declared, no automatic credit is applied."
+  },
+  "account_closure": {
+    "process": "Submit a closure request via the branch or customer care. All outstanding loans must be cleared before closure.",
+    "cooling_period": "Account closure requests are processed within 7 working days.",
+    "final_settlement": "Remaining balance is transferred to the linked bank account provided by the customer."
+  }
+}

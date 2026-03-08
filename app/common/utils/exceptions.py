@@ -101,19 +101,15 @@ def transfer_already_completed(message: str = "Transfer has already been process
 
 
 # ---------------------------------------------------------------------------
-# Wallet / Payments
+# Wallet / Add-money
 # ---------------------------------------------------------------------------
-
-def invalid_webhook_signature(message: str = "Webhook signature verification failed") -> AppException:
-    return AppException(code="INVALID_WEBHOOK_SIGNATURE", message=message, http_status=400)
-
 
 def payment_limit_exceeded(message: str = "Amount exceeds the maximum allowed limit") -> AppException:
     return AppException(code="PAYMENT_LIMIT_EXCEEDED", message=message, http_status=400)
 
 
-def razorpay_order_failed(message: str = "Failed to create payment order") -> AppException:
-    return AppException(code="RAZORPAY_ORDER_FAILED", message=message, http_status=502)
+def topup_not_found(message: str = "Top-up request not found or has expired") -> AppException:
+    return AppException(code="TOPUP_NOT_FOUND", message=message, http_status=404)
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +132,25 @@ def loan_booking_expired(
     message: str = "Loan booking has expired. Please start a new booking.",
 ) -> AppException:
     return AppException(code="LOAN_BOOKING_EXPIRED", message=message, http_status=410)
+
+
+# ---------------------------------------------------------------------------
+# AI Assistant
+# ---------------------------------------------------------------------------
+
+def chat_session_not_found(
+    message: str = "Chat session not found",
+) -> AppException:
+    return AppException(code="CHAT_SESSION_NOT_FOUND", message=message, http_status=404)
+
+
+def chat_session_expired(
+    message: str = "Chat session has expired. Please start a new session.",
+) -> AppException:
+    return AppException(code="CHAT_SESSION_EXPIRED", message=message, http_status=410)
+
+
+def chat_session_closed(
+    message: str = "Chat session is already closed",
+) -> AppException:
+    return AppException(code="CHAT_SESSION_CLOSED", message=message, http_status=409)

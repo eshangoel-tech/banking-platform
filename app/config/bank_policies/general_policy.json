@@ -1,0 +1,47 @@
+{
+  "_source": "ADX Bank General Policy & Customer Charter",
+  "about": {
+    "name": "ADX Bank",
+    "type": "Digital-only bank (demo/simulation)",
+    "disclaimer": "ADX Bank is NOT a real bank. This is a demonstration platform built for learning and portfolio purposes.",
+    "currency": "Indian Rupee (INR)",
+    "jurisdiction": "India"
+  },
+  "customer_support": {
+    "email": "support@adxbank.demo",
+    "hours": "Monday to Saturday, 9 AM to 6 PM IST",
+    "grievance_officer": "grievance@adxbank.demo",
+    "resolution_time": "All grievances resolved within 7 working days"
+  },
+  "data_privacy": {
+    "data_collected": ["Full name", "Email address", "Phone number", "Address", "Salary (optional)", "Transaction history"],
+    "data_usage": "Data is used only for banking operations and risk management",
+    "data_retention": "Customer data retained for 7 years post account closure as per RBI norms",
+    "third_party_sharing": "Data is not shared with third parties except as required by law",
+    "right_to_erasure": "Customers may request data deletion after account closure"
+  },
+  "security": {
+    "password_policy": "Minimum 8 characters with at least one uppercase, one number, and one special character",
+    "otp_policy": "All sensitive actions require OTP verification sent to registered email",
+    "session_expiry": "JWT sessions expire after 30 minutes of inactivity",
+    "failed_login": "Account is temporarily blocked for 1 hour after 3 consecutive failed login attempts",
+    "password_reset": "Password reset link expires in 15 minutes"
+  },
+  "prohibited_activities": [
+    "Money laundering or terrorist financing",
+    "Using the account for illegal activities",
+    "Sharing login credentials with third parties",
+    "Attempting to hack or manipulate the banking system",
+    "Creating multiple accounts with the same identity"
+  ],
+  "interest_rates_savings": {
+    "savings_account": "3.5% per annum on daily closing balance",
+    "interest_credit_frequency": "Quarterly"
+  },
+  "charges_and_fees": {
+    "account_maintenance": "Zero — no annual maintenance charges",
+    "transfer_charges": "Zero — all intra-bank transfers are free",
+    "add_money_charges": "Zero — no charges for adding money",
+    "loan_processing_fee": "1% of loan amount, deducted at disbursement"
+  }
+}

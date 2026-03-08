@@ -1,0 +1,26 @@
+{
+  "_source": "ADX Bank Wallet & Add-Money Policy",
+  "add_money": {
+    "process": "Two-step OTP-based process: Initiate → receive OTP on email → Confirm",
+    "minimum_amount": "₹1",
+    "maximum_per_transaction": "₹50,000 per transaction",
+    "daily_limit": "₹1,00,000 per day",
+    "monthly_limit": "₹5,00,000 per month",
+    "otp_validity": "5 minutes",
+    "otp_session_ttl": "Session expires in 5 minutes if not confirmed",
+    "currency": "INR only"
+  },
+  "payment_methods": {
+    "current": "OTP-verified direct credit (internal banking simulation)",
+    "note": "ADX Bank does not integrate with external payment gateways. All transactions are simulated internally for demo purposes."
+  },
+  "refund_policy": {
+    "failed_add_money": "If OTP verification fails or session expires, no money is debited. Re-initiate the transaction.",
+    "processing_time": "Successful add-money credits are instant",
+    "dispute": "Disputes on add-money transactions must be raised within 7 days"
+  },
+  "restrictions": {
+    "inactive_account": "Add-money is not allowed for inactive or blocked accounts",
+    "kyc_pending": "Customers with pending KYC can add up to ₹10,000 per month"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "_comment": "ADX Bank business rules — single source of truth for all banking constants. Loaded at startup by app/config/bank_rules.py.",
+
+  "otp": {
+    "max_attempts": 3,
+    "expiry_minutes": 5
+  },
+
+  "auth": {
+    "max_login_attempts": 3,
+    "account_block_duration_seconds": 3600,
+    "jwt_expiry_minutes": 30,
+    "password_reset_token_expiry_minutes": 15
+  },
+
+  "wallet": {
+    "add_money_max_amount": 50000,
+    "add_money_otp_ttl_seconds": 300,
+    "add_money_redis_ttl_seconds": 300,
+    "currency": "INR"
+  },
+
+  "transfer": {
+    "otp_ttl_seconds": 300,
+    "min_amount": 1
+  },
+
+  "loan": {
+    "interest_rate_pa": 0.12,
+    "max_tenure_months": 24,
+    "booking_redis_ttl_seconds": 300,
+    "otp_ttl_seconds": 300
+  },
+
+  "account": {
+    "joining_bonus_amount": 500,
+    "salary_credit_delay_seconds": 120,
+    "default_type": "SAVINGS",
+    "default_currency": "INR"
+  },
+
+  "pagination": {
+    "max_page_size": 50,
+    "default_page_size": 10
+  }
+}

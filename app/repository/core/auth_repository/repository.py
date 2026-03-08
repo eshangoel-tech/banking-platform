@@ -33,6 +33,7 @@ class AuthRepository:
         phone: str,
         password_hash: str,
         customer_id: str,
+        salary=None,
     ) -> User:
         user = User(
             full_name=full_name,
@@ -40,6 +41,7 @@ class AuthRepository:
             phone=phone,
             password_hash=password_hash,
             customer_id=customer_id,
+            salary=salary,
             status="INACTIVE",
             kyc_status="PENDING",
         )

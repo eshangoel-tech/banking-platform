@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Depends, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import asyncio
 import logging
 import traceback
@@ -9,12 +11,14 @@ from app.common.logging import setup_logging
 from app.repository.session import get_db, AsyncSessionLocal
 from app.repository.models.error_log import ErrorLog
 from app.api.middleware import HttpLoggingMiddleware
-from app.api.v1.core.auth.routes import router as auth_v1_router
-from app.api.v1.core.user.routes import router as user_v1_router
-from app.api.v1.core.transfer.routes import router as transfer_v1_router
-from app.api.v1.core.wallet.routes import router as wallet_v1_router
-from app.api.v1.core.loan.routes import router as loan_v1_router
+from app.api.v1.core.auth_routes import router as auth_v1_router
+from app.api.v1.core.user_routes import router as user_v1_router
+from app.api.v1.core.transfer_routes import router as transfer_v1_router
+from app.api.v1.core.wallet_routes import router as wallet_v1_router
+from app.api.v1.core.loan_routes import router as loan_v1_router
+from app.api.v1.ai.assistant_routes import router as ai_assistant_router
 from app.common.utils.exceptions import AppException
+from app.services.ai.rag.vector_store import initialize_vector_store
 
 # Initialize logging
 setup_logging()
@@ -29,19 +33,30 @@ app = FastAPI(
 # HTTP logging middleware
 app.add_middleware(HttpLoggingMiddleware)
 
+# CORS — must be added after other middleware so it runs outermost
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # API routers
 app.include_router(auth_v1_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user_v1_router, prefix="/api/v1", tags=["user"])
 app.include_router(transfer_v1_router, prefix="/api/v1/transfer", tags=["transfer"])
 app.include_router(wallet_v1_router, prefix="/api/v1/wallet", tags=["wallet"])
 app.include_router(loan_v1_router, prefix="/api/v1/loan", tags=["loan"])
+app.include_router(ai_assistant_router, prefix="/api/v1/ai/assistant", tags=["ai-assistant"])
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
-    # Logging is already initialized via setup_logging() import
-    pass
+    # RAG vector store: fresh embeddings for bank_rules + bank_policies
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, initialize_vector_store)
 
 
 @app.on_event("shutdown")
@@ -60,11 +75,12 @@ async def shutdown_event():
 
 
 @app.get("/health")
-def health_check():
+def health_check(request: Request):
     return {
         "success": True,
-        "service": "banking-platform",
-        "status": "healthy"
+        "message": "Service is healthy.",
+        "data": {"service": "banking-platform", "status": "healthy"},
+        "request_id": str(getattr(request.state, "request_id", "")),
     }
 
 
@@ -77,6 +93,25 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
             "success": False,
             "message": exc.message,
             "data": {"code": exc.code},
+            "request_id": str(request_id),
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", uuid.uuid4())
+    errors = exc.errors()
+    # Build a readable message from the first validation error
+    first = errors[0]
+    field = ".".join(str(p) for p in first["loc"] if p != "body")
+    message = f"{field}: {first['msg']}" if field else first["msg"]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "message": message,
+            "data": {"code": "VALIDATION_ERROR"},
             "request_id": str(request_id),
         },
     )

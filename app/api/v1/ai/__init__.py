@@ -1,0 +1,1 @@
+"""AI assistant API routes."""

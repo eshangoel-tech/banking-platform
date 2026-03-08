@@ -41,10 +41,11 @@ from app.repository.models import (  # noqa: F401
     AuditLog,
     ErrorLog,
     ExternalServiceLog,
-    AIInteraction,
     VerifiedEmail,
     Transfer,
-    PaymentOrder,
+    ChatSession,
+    ChatResponse,
+    LLMInteraction,
 )
 
 target_metadata = Base.metadata

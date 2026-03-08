@@ -1,0 +1,32 @@
+{
+  "_source": "ADX Bank Transfer Policy",
+  "fund_transfer": {
+    "transfer_type": "Internal transfer between ADX Bank accounts only (intra-bank)",
+    "minimum_amount": "₹1 (minimum transfer amount)",
+    "maximum_single_transfer": "₹5,00,000 per transaction (subject to KYC verification)",
+    "daily_limit": "₹10,00,000 per day per customer",
+    "transfer_hours": "24x7 — transfers are processed instantly",
+    "currency": "INR only"
+  },
+  "otp_verification": {
+    "required": true,
+    "otp_validity": "5 minutes from time of issue",
+    "max_attempts": 3,
+    "otp_sent_to": "Registered email address",
+    "process": "Initiate transfer → receive OTP → confirm with OTP within 5 minutes"
+  },
+  "failed_transfers": {
+    "fund_reversal": "If a transfer fails after debit, funds are reversed within 2 hours",
+    "otp_expiry": "If OTP expires, the transfer is cancelled and must be re-initiated",
+    "insufficient_funds": "Transfer rejected immediately if sender has insufficient balance"
+  },
+  "restrictions": {
+    "self_transfer": "Transfers to your own account number are not permitted",
+    "inactive_accounts": "Transfers to inactive or blocked accounts are rejected",
+    "kyc_pending": "Customers with PENDING KYC cannot initiate transfers above ₹50,000"
+  },
+  "transaction_record": {
+    "retention": "All transfer records are retained for 7 years as per RBI guidelines",
+    "dispute_window": "Disputes must be raised within 30 days of the transaction"
+  }
+}

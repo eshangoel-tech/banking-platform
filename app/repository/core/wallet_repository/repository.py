@@ -10,9 +10,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repository.models.account import Account
-from app.repository.models.audit_log import AuditLog
 from app.repository.models.ledger_entry import LedgerEntry
-from app.repository.models.payment_order import PaymentOrder
+from app.repository.models.otp_verification import OtpVerification
 
 
 class WalletRepository:
@@ -52,59 +51,50 @@ class WalletRepository:
         return result.scalar_one()
 
     # ------------------------------------------------------------------
-    # PaymentOrder CRUD
+    # OTP helpers (for ADD_MONEY flow)
     # ------------------------------------------------------------------
 
-    async def create_payment_order(
+    async def get_valid_topup_otp(
         self,
         db: AsyncSession,
         *,
         user_id: UUID,
-        account_id: UUID,
-        razorpay_order_id: str,
-        amount_requested: Decimal,
-        currency: str = "INR",
-    ) -> PaymentOrder:
-        order = PaymentOrder(
-            user_id=user_id,
-            account_id=account_id,
-            razorpay_order_id=razorpay_order_id,
-            amount_requested=amount_requested,
-            currency=currency,
-            status="CREATED",
-        )
-        db.add(order)
-        await db.flush()
-        return order
-
-    async def get_payment_order_by_razorpay_id(
-        self, db: AsyncSession, razorpay_order_id: str
-    ) -> Optional[PaymentOrder]:
+        topup_id: UUID,
+        now: datetime,
+    ) -> Optional[OtpVerification]:
+        """Fetch a PENDING ADD_MONEY OTP matching user + topup reference."""
         res = await db.execute(
-            select(PaymentOrder).where(
-                PaymentOrder.razorpay_order_id == razorpay_order_id
+            select(OtpVerification)
+            .where(
+                OtpVerification.user_id == user_id,
+                OtpVerification.otp_type == "ADD_MONEY",
+                OtpVerification.reference_id == topup_id,
+                OtpVerification.status == "PENDING",
             )
+            .order_by(OtpVerification.created_at.desc())
         )
-        return res.scalar_one_or_none()
+        otp = res.scalar_one_or_none()
+        if not otp:
+            return None
+        if otp.expires_at < now:
+            return None
+        return otp
 
-    async def update_payment_status(
-        self,
-        db: AsyncSession,
-        order_id: UUID,
-        status: str,
-        *,
-        amount_paid: Optional[Decimal] = None,
-        completed_at: Optional[datetime] = None,
-    ) -> None:
-        values: dict = {"status": status}
-        if amount_paid is not None:
-            values["amount_paid"] = amount_paid
-        if completed_at is not None:
-            values["completed_at"] = completed_at
-        await db.execute(
-            update(PaymentOrder).where(PaymentOrder.id == order_id).values(**values)
-        )
+    async def increment_otp_attempts(
+        self, db: AsyncSession, otp: OtpVerification
+    ) -> OtpVerification:
+        otp.attempts = (otp.attempts or 0) + 1
+        if otp.attempts >= (otp.max_attempts or 3):
+            otp.status = "FAILED"
         await db.flush()
+        return otp
+
+    async def mark_otp_verified(self, db: AsyncSession, otp_id: UUID) -> None:
+        await db.execute(
+            update(OtpVerification)
+            .where(OtpVerification.id == otp_id)
+            .values(status="VERIFIED")
+        )
 
     # ------------------------------------------------------------------
     # Ledger

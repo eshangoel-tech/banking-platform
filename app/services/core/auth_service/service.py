@@ -52,6 +52,7 @@ class AuthService:
         email: str,
         phone: str,
         password: str,
+        salary=None,
     ) -> str:
         if await self.repo.get_user_by_email(db, email):
             raise user_already_exists("Email already registered")
@@ -61,27 +62,28 @@ class AuthService:
         password_hash = hash_password(password)
         customer_id = await self.repo.generate_unique_customer_id(db)
 
-        async with db.begin():
-            user = await self.repo.create_user(
-                db,
-                full_name=full_name,
-                email=email,
-                phone=phone,
-                password_hash=password_hash,
-                customer_id=customer_id,
-            )
+        user = await self.repo.create_user(
+            db,
+            full_name=full_name,
+            email=email,
+            phone=phone,
+            password_hash=password_hash,
+            customer_id=customer_id,
+            salary=salary,
+        )
 
-            otp = generate_otp()
-            otp_hash = hash_otp(otp)
-            expires_at = datetime.utcnow() + timedelta(minutes=5)
-            await self.repo.create_otp(
-                db,
-                user_id=user.id,
-                otp_hash=otp_hash,
-                otp_type="EMAIL_VERIFY",
-                expires_at=expires_at,
-                max_attempts=3,
-            )
+        otp = generate_otp()
+        otp_hash = hash_otp(otp)
+        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        await self.repo.create_otp(
+            db,
+            user_id=user.id,
+            otp_hash=otp_hash,
+            otp_type="EMAIL_VERIFY",
+            expires_at=expires_at,
+            max_attempts=3,
+        )
+        await db.commit()
 
         # best-effort — SMTP failure does not roll back registration
         try:
@@ -116,20 +118,30 @@ class AuthService:
             raise max_otp_attempts()
 
         if not verify_otp_hash(otp, otp_row.otp_hash):
-            async with db.begin():
-                otp_row = await self.repo.increment_otp_attempts(db, otp_row)
+            otp_row = await self.repo.increment_otp_attempts(db, otp_row)
+            await db.commit()
             if otp_row.attempts >= otp_row.max_attempts:
                 raise max_otp_attempts()
             raise invalid_otp()
 
-        async with db.begin():
-            await self.repo.mark_otp_verified(db, otp_row.id)
-            await self.repo.activate_user(db, user.id)
-            account_number = await self.repo.generate_unique_account_number(db)
-            account = await self.repo.create_account(
-                db,
-                user_id=user.id,
-                account_number=account_number,
+        await self.repo.mark_otp_verified(db, otp_row.id)
+        await self.repo.activate_user(db, user.id)
+        account_number = await self.repo.generate_unique_account_number(db)
+        account = await self.repo.create_account(
+            db,
+            user_id=user.id,
+            account_number=account_number,
+        )
+        await db.commit()
+
+        # Fire-and-forget: joining bonus + scheduled salary credit (via Celery)
+        try:
+            from app.tasks.account_tasks import on_email_verified_task
+            on_email_verified_task.delay(str(user.id), str(account.id))
+        except Exception:
+            logger.exception(
+                "Failed to dispatch on_email_verified_task",
+                extra={"user_id": str(user.id)},
             )
 
         return {
@@ -163,10 +175,10 @@ class AuthService:
 
         if not verify_password(password, user.password_hash):
             new_attempts = (user.failed_login_attempts or 0) + 1
-            async with db.begin():
-                await self.repo.increment_failed_attempts(db, user.id)
-                if new_attempts > 3:
-                    await self.repo.block_user(db, user.id, now + timedelta(hours=1))
+            await self.repo.increment_failed_attempts(db, user.id)
+            if new_attempts > 3:
+                await self.repo.block_user(db, user.id, now + timedelta(hours=1))
+            await db.commit()
             raise invalid_credentials()
 
         # Correct password — reset counter and issue OTP
@@ -174,16 +186,16 @@ class AuthService:
         otp_hash = hash_otp(otp)
         expires_at = datetime.utcnow() + timedelta(minutes=5)
 
-        async with db.begin():
-            await self.repo.reset_failed_attempts(db, user.id)
-            await self.repo.create_otp(
-                db,
-                user_id=user.id,
-                otp_hash=otp_hash,
-                otp_type="LOGIN",
-                expires_at=expires_at,
-                max_attempts=3,
-            )
+        await self.repo.reset_failed_attempts(db, user.id)
+        await self.repo.create_otp(
+            db,
+            user_id=user.id,
+            otp_hash=otp_hash,
+            otp_type="LOGIN",
+            expires_at=expires_at,
+            max_attempts=3,
+        )
+        await db.commit()
 
         try:
             await send_otp_email(user.email, otp, otp_type="LOGIN")
@@ -218,23 +230,23 @@ class AuthService:
             raise max_otp_attempts()
 
         if not verify_otp_hash(otp, otp_row.otp_hash):
-            async with db.begin():
-                otp_row = await self.repo.increment_otp_attempts(db, otp_row)
+            otp_row = await self.repo.increment_otp_attempts(db, otp_row)
+            await db.commit()
             if otp_row.attempts >= otp_row.max_attempts:
                 raise max_otp_attempts()
             raise invalid_otp()
 
-        async with db.begin():
-            await self.repo.mark_otp_verified(db, otp_row.id)
-            session = await self.repo.create_session(
-                db,
-                user_id=user.id,
-                expires_at=datetime.utcnow() + timedelta(minutes=30),
-                session_meta={"full_name": user.full_name, "email": user.email},
-                ip_address=ip_address,
-                user_agent=user_agent,
-            )
-            await self.repo.update_last_login(db, user.id)
+        await self.repo.mark_otp_verified(db, otp_row.id)
+        session = await self.repo.create_session(
+            db,
+            user_id=user.id,
+            expires_at=datetime.utcnow() + timedelta(minutes=30),
+            session_meta={"full_name": user.full_name, "email": user.email},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        await self.repo.update_last_login(db, user.id)
+        await db.commit()
 
         access_token = create_access_token(
             data={"user_id": str(user.id), "session_id": str(session.id)},
@@ -261,13 +273,13 @@ class AuthService:
         token_hash = hash_token(raw_token)
         expires_at = datetime.utcnow() + timedelta(minutes=15)
 
-        async with db.begin():
-            await self.repo.save_reset_token(
-                db,
-                user_id=user.id,
-                reset_token_hash=token_hash,
-                expires_at=expires_at,
-            )
+        await self.repo.save_reset_token(
+            db,
+            user_id=user.id,
+            reset_token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        await db.commit()
 
         try:
             await send_reset_password_email(email, raw_token)
@@ -296,7 +308,7 @@ class AuthService:
 
         new_hash = hash_password(new_password)
 
-        async with db.begin():
-            await self.repo.update_password(db, user.id, new_hash)
-            await self.repo.clear_reset_token(db, user.id)
-            await self.repo.invalidate_user_sessions(db, user.id)
+        await self.repo.update_password(db, user.id, new_hash)
+        await self.repo.clear_reset_token(db, user.id)
+        await self.repo.invalidate_user_sessions(db, user.id)
+        await db.commit()

@@ -101,32 +101,32 @@ class TransferService:
         otp_hash_value = hash_otp(otp_plaintext)
         expires_at = datetime.utcnow() + timedelta(minutes=_OTP_TTL_MINUTES)
 
-        async with db.begin():
-            transfer = await self.repo.create_transfer(
-                db,
-                sender_account_id=sender_account.id,
-                receiver_account_id=receiver_account.id,
-                amount=amount,
-            )
-            await self.repo.create_transfer_otp(
-                db,
+        transfer = await self.repo.create_transfer(
+            db,
+            sender_account_id=sender_account.id,
+            receiver_account_id=receiver_account.id,
+            amount=amount,
+        )
+        await self.repo.create_transfer_otp(
+            db,
+            user_id=user.id,
+            otp_hash=otp_hash_value,
+            expires_at=expires_at,
+            transfer_id=transfer.id,
+        )
+        db.add(
+            self._audit(
                 user_id=user.id,
-                otp_hash=otp_hash_value,
-                expires_at=expires_at,
-                transfer_id=transfer.id,
+                session_id=session_id,
+                event_type="TRANSFER_INITIATED",
+                metadata={
+                    "transfer_id": str(transfer.id),
+                    "amount": str(amount),
+                    "receiver_account_id": str(receiver_account.id),
+                },
             )
-            db.add(
-                self._audit(
-                    user_id=user.id,
-                    session_id=session_id,
-                    event_type="TRANSFER_INITIATED",
-                    metadata={
-                        "transfer_id": str(transfer.id),
-                        "amount": str(amount),
-                        "receiver_account_id": str(receiver_account.id),
-                    },
-                )
-            )
+        )
+        await db.commit()
 
         # -- Send OTP email (best-effort)
         try:
@@ -185,38 +185,12 @@ class TransferService:
             raise max_otp_attempts()
 
         if not verify_otp_hash(otp, otp_row.otp_hash):
-            async with db.begin():
-                otp_row = await self.repo.increment_otp_attempts(db, otp_row)
-                if otp_row.attempts >= (otp_row.max_attempts or 3):
-                    # Also mark transfer FAILED when max OTP attempts exceeded
-                    await self.repo.update_transfer_status(
-                        db, transfer_id, "FAILED"
-                    )
-                    db.add(
-                        self._audit(
-                            user_id=user.id,
-                            session_id=session_id,
-                            event_type="TRANSFER_FAILED",
-                            metadata={
-                                "transfer_id": str(transfer_id),
-                                "reason": "max_otp_attempts",
-                            },
-                        )
-                    )
-                    raise max_otp_attempts()
-            raise invalid_otp()
-
-        # -- Atomic execution block
-        async with db.begin():
-            # Lock sender row; recheck balance inside the transaction
-            sender = await self.repo.get_account_for_update(
-                db, transfer.sender_account_id
-            )
-            if sender is None:
-                raise not_found("Sender account")
-
-            if sender.balance < transfer.amount:
-                await self.repo.update_transfer_status(db, transfer_id, "FAILED")
+            otp_row = await self.repo.increment_otp_attempts(db, otp_row)
+            if otp_row.attempts >= (otp_row.max_attempts or 3):
+                # Also mark transfer FAILED when max OTP attempts exceeded
+                await self.repo.update_transfer_status(
+                    db, transfer_id, "FAILED"
+                )
                 db.add(
                     self._audit(
                         user_id=user.id,
@@ -224,63 +198,91 @@ class TransferService:
                         event_type="TRANSFER_FAILED",
                         metadata={
                             "transfer_id": str(transfer_id),
-                            "reason": "insufficient_balance",
+                            "reason": "max_otp_attempts",
                         },
                     )
                 )
-                raise insufficient_balance()
+                await db.commit()
+                raise max_otp_attempts()
+            await db.commit()
+            raise invalid_otp()
 
-            # Deduct from sender
-            new_sender_balance = sender.balance - transfer.amount
-            await self.repo.set_account_balance(
-                db, transfer.sender_account_id, new_sender_balance
-            )
+        # -- Atomic execution block (implicit transaction already open from reads above)
+        # Lock sender row; recheck balance inside the transaction
+        sender = await self.repo.get_account_for_update(
+            db, transfer.sender_account_id
+        )
+        if sender is None:
+            raise not_found("Sender account")
 
-            # Credit receiver (atomic UPDATE … RETURNING)
-            new_receiver_balance = await self.repo.credit_account_balance(
-                db, transfer.receiver_account_id, transfer.amount
-            )
-
-            # Ledger: DEBIT entry for sender
-            await self.repo.create_ledger_entry(
-                db,
-                account_id=transfer.sender_account_id,
-                entry_type="DEBIT",
-                amount=transfer.amount,
-                balance_after=new_sender_balance,
-                reference_type="TRANSFER",
-                reference_id=transfer.id,
-                description=f"Transfer to account {transfer.receiver_account_id}",
-            )
-
-            # Ledger: CREDIT entry for receiver
-            await self.repo.create_ledger_entry(
-                db,
-                account_id=transfer.receiver_account_id,
-                entry_type="CREDIT",
-                amount=transfer.amount,
-                balance_after=new_receiver_balance,
-                reference_type="TRANSFER",
-                reference_id=transfer.id,
-                description=f"Transfer from account {transfer.sender_account_id}",
-            )
-
-            # Finalise transfer and OTP
-            await self.repo.update_transfer_status(
-                db, transfer_id, "COMPLETED", completed_at=datetime.utcnow()
-            )
-            await self.repo.mark_otp_verified(db, otp_row.id)
-
+        if sender.balance < transfer.amount:
+            await self.repo.update_transfer_status(db, transfer_id, "FAILED")
             db.add(
                 self._audit(
                     user_id=user.id,
                     session_id=session_id,
-                    event_type="TRANSFER_COMPLETED",
+                    event_type="TRANSFER_FAILED",
                     metadata={
                         "transfer_id": str(transfer_id),
-                        "amount": str(transfer.amount),
-                        "sender_account_id": str(transfer.sender_account_id),
-                        "receiver_account_id": str(transfer.receiver_account_id),
+                        "reason": "insufficient_balance",
                     },
                 )
             )
+            await db.commit()
+            raise insufficient_balance()
+
+        # Deduct from sender
+        new_sender_balance = sender.balance - transfer.amount
+        await self.repo.set_account_balance(
+            db, transfer.sender_account_id, new_sender_balance
+        )
+
+        # Credit receiver (atomic UPDATE … RETURNING)
+        new_receiver_balance = await self.repo.credit_account_balance(
+            db, transfer.receiver_account_id, transfer.amount
+        )
+
+        # Ledger: DEBIT entry for sender
+        await self.repo.create_ledger_entry(
+            db,
+            account_id=transfer.sender_account_id,
+            entry_type="DEBIT",
+            amount=transfer.amount,
+            balance_after=new_sender_balance,
+            reference_type="TRANSFER",
+            reference_id=transfer.id,
+            description=f"Transfer to account {transfer.receiver_account_id}",
+        )
+
+        # Ledger: CREDIT entry for receiver
+        await self.repo.create_ledger_entry(
+            db,
+            account_id=transfer.receiver_account_id,
+            entry_type="CREDIT",
+            amount=transfer.amount,
+            balance_after=new_receiver_balance,
+            reference_type="TRANSFER",
+            reference_id=transfer.id,
+            description=f"Transfer from account {transfer.sender_account_id}",
+        )
+
+        # Finalise transfer and OTP
+        await self.repo.update_transfer_status(
+            db, transfer_id, "COMPLETED", completed_at=datetime.utcnow()
+        )
+        await self.repo.mark_otp_verified(db, otp_row.id)
+
+        db.add(
+            self._audit(
+                user_id=user.id,
+                session_id=session_id,
+                event_type="TRANSFER_COMPLETED",
+                metadata={
+                    "transfer_id": str(transfer_id),
+                    "amount": str(transfer.amount),
+                    "sender_account_id": str(transfer.sender_account_id),
+                    "receiver_account_id": str(transfer.receiver_account_id),
+                },
+            )
+        )
+        await db.commit()

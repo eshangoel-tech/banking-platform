@@ -1,4 +1,4 @@
-"""Pydantic schemas for the wallet / add-money module."""
+"""Pydantic schemas for the wallet / add-money module (OTP-based)."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -10,22 +10,25 @@ class AddMoneyInitiateRequest(BaseModel):
     amount: Decimal = Field(
         ...,
         gt=0,
-        le=20_000,
+        le=50_000,
         decimal_places=2,
-        description="Amount in INR to add (min 1, max 20 000)",
+        description="Amount in INR to add (min ₹1, max ₹50,000)",
     )
 
 
 class AddMoneyInitiateResponse(BaseModel):
-    """Payload returned after creating a Razorpay order."""
-
-    order_id: str
-    razorpay_key_id: str
+    """Returned after initiating an OTP-based top-up."""
+    topup_id: str
     amount: str
-    currency: str
+    message: str
 
 
-class WebhookResponse(BaseModel):
-    """Minimal 200-OK ack sent back to Razorpay."""
+class AddMoneyConfirmRequest(BaseModel):
+    topup_id: str = Field(..., min_length=36, max_length=36, description="UUID returned from initiate")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP sent to registered email")
 
-    status: str = "ok"
+
+class AddMoneyConfirmResponse(BaseModel):
+    amount_credited: str
+    new_balance: str
+    currency: str = "INR"

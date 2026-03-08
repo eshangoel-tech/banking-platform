@@ -4,7 +4,7 @@ Production-style digital banking backend (ADX Bank).
 
 ## Tech stack
 
-- **Python** · **FastAPI** · **PostgreSQL** · **Redis** · **Celery** · **SMTP email**
+- **Python** · **FastAPI** · **PostgreSQL** · **Redis** · **Celery** · **SMTP email** · **OpenAI (gpt-4o-mini)** · **ChromaDB (RAG)**
 - Modular single-repo architecture
 
 ## Project structure
@@ -73,7 +73,9 @@ Defined in **`app/repository/models/`** and applied via **Alembic** in `migratio
 | **audit_logs**           | Business/audit events            | id (UUID), session_id, user_id, event_type, metadata (JSONB), created_at; indexes on session_id, user_id, event_type, created_at |
 | **error_logs**           | Unhandled application errors     | id (UUID), request_id, session_id, user_id, path, method, error_message, stack_trace, created_at; indexed on request_id, session_id, user_id, created_at |
 | **external_service_logs**| External integration calls       | id (UUID), service_name, session_id, user_id, request_payload (JSONB), response_payload (JSONB), status, created_at; indexes on service_name, status, created_at, session_id, user_id |
-| **ai_interactions**      | AI model usage                   | id (UUID), session_id, user_id, model_name, prompt, response, tokens_used, latency_ms, created_at; indexes on session_id, user_id, created_at |
+| **chat_sessions**        | AI chat session lifecycle        | chat_sess_id (UUID PK), session_id (FK→sessions, nullable), customer_id, started_at, last_active, status (ACTIVE/CLOSED) |
+| **chat_responses**       | One row per user↔assistant turn  | response_id (UUID PK), chat_sess_id (FK→chat_sessions), user_message, assistant_response, created_at |
+| **llm_interactions**     | Low-level record per LLM call    | interaction_id (UUID PK), response_id (FK→chat_responses), agent_name, request, response, status, error_msg, token_input, token_output, context_attached, latency_ms, created_at, updated_at |
 
 ### Where to change the DB
 
@@ -145,6 +147,113 @@ Clean architecture locations:
 - **OTP utils + SMTP delivery**: `app/common/utils/otp.py`
 - **Password hashing + JWT**: `app/common/utils/security.py`
 - **Exceptions**: `app/common/utils/exceptions.py`
+
+## AI assistant (v1)
+
+A three-layer multi-agent AI assistant powered by OpenAI **gpt-4o-mini** and a
+ChromaDB RAG pipeline over bank policies and rules.
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/ai/assistant/start` | JWT | Open a session; pre-loads user context + chat history into Redis |
+| POST | `/api/v1/ai/assistant/chat` | JWT | Send a message; runs multi-agent pipeline; returns response + redirect actions |
+| POST | `/api/v1/ai/assistant/stop` | JWT | Close session; clears Redis cache |
+
+### Architecture
+
+```
+User message
+     │
+     ▼
+Layer 1 ─ Router (assistant agent)
+     │  Splits message into sub-queries.
+     │  Assigns each to: bank_manager | loan_officer | accountant | support | receptionist
+     │  Specifies required context types per sub-query.
+     │
+     ▼
+Layer 2 ─ Domain agents (run concurrently via asyncio.gather)
+     │  bank_manager  — account balance, transactions
+     │  loan_officer  — loans, EMI, eligibility
+     │  accountant    — financial summaries, spending analysis
+     │  support       — policy/rules questions (uses RAG context)
+     │
+     ▼
+Layer 3 ─ Receptionist
+     │  Combines all domain-agent responses into one coherent reply.
+     │  Handles greetings, unclear queries, redirect confirmations.
+     │  Collects and deduplicates redirect actions.
+     │
+     ▼
+Final response  +  redirect actions (e.g. PAY_EMI → /loans)
+```
+
+### Context types
+
+The router can request any combination:
+
+| Name | Source |
+|------|--------|
+| `user_context` | Redis (cached at session start) |
+| `chat_history` | Redis (updated after each turn) |
+| `account_context` | DB — `accounts` table |
+| `transaction_context` | DB — `ledger_entries` table (last 10) |
+| `loan_context` | DB — `loans` table |
+| `bank_policy` | RAG — ChromaDB `bank_policies` collection |
+| `bank_rules` | RAG — ChromaDB `bank_rules` collection |
+
+### Redirect actions (tools)
+
+Agents can suggest page navigations.  The API returns them as:
+
+```json
+{
+  "name" : "PAY_EMI",
+  "label": "Pay EMI",
+  "url"  : "/loans"
+}
+```
+
+Available tools: `PAY_EMI`, `GET_LOAN`, `ADD_MONEY`, `TRANSFER_MONEY`,
+`EDIT_PROFILE`, `VIEW_TRANSACTIONS`, `VIEW_LOANS`, `VIEW_ACCOUNT`, `CONTACT_SUPPORT`.
+
+Defined in **`app/common/tools.py`**.
+
+### RAG pipeline
+
+On server startup `initialize_vector_store()` (called via `asyncio.run_in_executor`):
+1. Drops and recreates two ChromaDB collections (`bank_rules`, `bank_policies`).
+2. Parses JSON files from `app/config/bank_rules/` and `app/config/bank_policies/`.
+3. Embeds all chunks using `sentence-transformers/all-MiniLM-L6-v2`.
+4. Upserts into ChromaDB (cosine similarity, persistent at `chroma_data/`).
+
+Retrieval returns top-k annotated chunks: `[source | section | similarity]\ntext`.
+
+### Key files
+
+| File | Role |
+|------|------|
+| `app/config/ai_config.py` | OPENAI_API_KEY, model, session TTL |
+| `app/common/tools.py` | Redirect tool definitions |
+| `app/services/ai/llm_utils.py` | Shared `call_llm()` + `LLMCallResult` |
+| `app/ai_agents/assistant/agent.py` | Layer 1 — router |
+| `app/ai_agents/bank_manager/agent.py` | Layer 2 — bank manager |
+| `app/ai_agents/loan_officer/agent.py` | Layer 2 — loan officer |
+| `app/ai_agents/accountant/agent.py` | Layer 2 — accountant |
+| `app/ai_agents/support_staff/agent.py` | Layer 2 — support (RAG) |
+| `app/ai_agents/receptionist/agent.py` | Layer 3 — receptionist / combiner |
+| `app/services/ai/assistant_service.py` | Orchestration service |
+| `app/services/ai/context_fetch.py` | DB + RAG context fetchers |
+| `app/services/ai/rag/` | Embedder, ingester, vector store, retriever |
+| `app/repository/core/chat_repository/` | ChatSession, ChatResponse, LLMInteraction data access |
+
+### Environment variables
+
+```
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini   # optional, defaults to gpt-4o-mini
+```
 
 ## Run locally
 
