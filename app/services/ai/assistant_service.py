@@ -47,10 +47,12 @@ from app.repository.models.user import User
 from app.services.ai.context_fetch import (
     fetch_account_context,
     fetch_bank_policy_context,
+    fetch_bank_policy_document,
     fetch_bank_rules_context,
     fetch_chat_history_context,
     fetch_loan_details,
     fetch_transaction_context,
+    fetch_transactions_tool,
     fetch_user_context,
 )
 from app.services.ai.llm_utils import LLMCallResult
@@ -292,6 +294,15 @@ class AssistantService:
             elif ctx_type == "bank_rules":
                 context["bank_rules"] = await asyncio.to_thread(
                     fetch_bank_rules_context, decision.text
+                )
+            # ── New tool-based context types ──────────────────────────────
+            elif ctx_type == "transaction_analysis":
+                # Full history + spending summary — used for deep financial analysis
+                context["transaction_analysis"] = await fetch_transactions_tool(db, user.id)
+            elif ctx_type == "bank_policy_document":
+                # Deep RAG (top_k=6) — used for detailed, multi-section policy questions
+                context["bank_policy_document"] = await asyncio.to_thread(
+                    fetch_bank_policy_document, decision.text
                 )
             else:
                 logger.debug("Unknown context type requested by router: %s", ctx_type)

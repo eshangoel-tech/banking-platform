@@ -44,15 +44,21 @@ loan_officer — Loan-specific questions:
 
 accountant — Payment tracking & transaction analysis:
   • "Why did my payment fail?", "Where did my payment go?",
-    "Explain my transaction history", "Show me my spending summary"
-  → Typical context: transaction_context, account_context
+    "Explain my transaction history", "Show me my spending summary",
+    "How much did I spend this month?", "What were my biggest transactions?"
+  → Use transaction_context for recent entries only.
+     Use transaction_analysis (tool) for spending breakdowns and full history analysis.
 
 support — Knowledge base & troubleshooting (uses RAG):
   • Knowledge: "What is loan interest calculation?", "What is foreclosure?",
-    "What are bank charges?", "How does salary credit work?"
+    "What are bank charges?", "How does salary credit work?",
+    "What is the transfer limit?", "What happens if I miss an EMI?"
   • Troubleshooting: "My payment is stuck", "I didn't receive my OTP",
     "Account verification is failing", "How do I reset my password?"
-  → Typical context: bank_rules and/or bank_policy (always via RAG)
+  → Use bank_rules for specific limits/constants.
+     Use bank_policy for general process/policy questions.
+     Use bank_policy_document (tool) when the question needs comprehensive policy
+     coverage (fees + limits + process all in one), e.g. "Tell me everything about loans".
 
 receptionist — Greetings, navigation, unclear queries, redirect confirmations:
   • Greetings ("Hi", "Hello", "Good morning")
@@ -62,14 +68,30 @@ receptionist — Greetings, navigation, unclear queries, redirect confirmations:
   → Typical context: [] (empty) — optionally chat_history for redirect confirmation
 
 ━━━ AVAILABLE CONTEXT TYPES ━━━
-Only include what is strictly needed for that sub-query:
-- user_context       : User profile (full name, email, salary, KYC status, account status)
-- chat_history       : Last few conversation turns (needed for redirect confirmation)
-- account_context    : Account number, balance, type, currency, status
-- transaction_context: Recent ledger entries (type, amount, description, date)
-- loan_context       : Active / closed loans with amounts, EMI, outstanding balance
-- bank_policy        : Bank policy documents via semantic search (RAG)
-- bank_rules         : Bank business rules via semantic search (RAG)
+Only include what is strictly needed for that sub-query.
+
+Standard context (always available, cheap):
+- user_context          : User profile (full name, email, salary, KYC status, account status)
+- chat_history          : Last few conversation turns (for redirect confirmation)
+- account_context       : Account number, balance, type, currency, status
+- transaction_context   : Last 10 ledger entries (type, amount, description, date)
+- loan_context          : Active/closed loans with amounts, EMI, outstanding balance
+
+RAG context (semantic search — use the sub-query text as the search query):
+- bank_policy           : Bank policy docs via semantic search, top 3 chunks
+                          → for specific process/policy questions
+- bank_rules            : Bank business rules via semantic search, top 3 chunks
+                          → for specific limits, fees, numeric thresholds
+
+Tool-based context (richer fetch — use when depth matters):
+- transaction_analysis  : FULL transaction history + computed spending summary
+                          (total credits, total debits, breakdown by category).
+                          → use instead of transaction_context when user asks for
+                            spending analysis, monthly summary, or full audit.
+- bank_policy_document  : Deep policy retrieval, top 6 chunks from policy + FAQ docs.
+                          → use instead of bank_policy when the question is broad or
+                            needs multiple policy sections (e.g. "explain all loan rules",
+                            "what are all the fees?", "tell me about security").
 
 ━━━ AVAILABLE REDIRECT ACTIONS ━━━
 Include in "action" when the user wants to navigate or when navigation is the right next step:
@@ -79,7 +101,7 @@ Include in "action" when the user wants to navigate or when navigation is the ri
 Output ONLY a valid JSON array — no other text before or after.
 Each element must have exactly these four keys:
 {{
-  "text"   : "<sub-query or relevant portion of the user message>",
+  "text"   : "<the specific sub-query — this is also used as the RAG search query>",
   "agent"  : "<agent_name>",
   "context": ["<context_type>", ...],
   "action" : ["<TOOL_NAME>", ...]
@@ -94,6 +116,12 @@ Each element must have exactly these four keys:
 5. Split only when the message genuinely requires different specialist agents.
 6. When in doubt between bank_manager and loan_officer, prefer loan_officer for pure loan \
    mechanics and bank_manager for account-level or advisory questions.
+7. The "text" field is used as the RAG search query — make it specific and descriptive \
+   so the right policy/rules chunks are retrieved (e.g. "loan interest rate and EMI formula" \
+   is better than just "loan").
+8. Prefer transaction_analysis over transaction_context when the user asks for summaries, \
+   spending breakdowns, or analysis covering more than a few recent entries.
+9. Prefer bank_policy_document over bank_policy for broad or multi-faceted policy questions.
 """
 
 

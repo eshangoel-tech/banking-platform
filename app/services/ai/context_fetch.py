@@ -6,13 +6,17 @@ serialisable Python dict or list ready to be injected into an LLM prompt.
 
 Available fetchers
 ------------------
-1. fetch_user_context          — full user profile
-2. fetch_chat_history_context  — last N chat turns for the user
-3. fetch_account_context       — account details + current balance
-4. fetch_transaction_context   — last N ledger entries (all if limit=None)
-5. fetch_loan_details          — active/all loans with filters
-6. fetch_bank_policy_context   — RAG over bank_policies collection
-7. fetch_bank_rules_context    — RAG over bank_rules collection
+1. fetch_user_context              — full user profile
+2. fetch_chat_history_context      — last N chat turns for the user
+3. fetch_account_context           — account details + current balance
+4. fetch_transaction_context       — last N ledger entries (all if limit=None)
+5. fetch_loan_details              — active/all loans with filters
+6. fetch_bank_policy_context       — RAG over bank_policies collection (top_k=3)
+7. fetch_bank_rules_context        — RAG over bank_rules collection (top_k=3)
+
+Tools (richer, targeted fetchers used by the router as named context types)
+8. fetch_transactions_tool         — full transaction history + spending summary
+9. fetch_bank_policy_document      — deep RAG over bank_policies (top_k=6)
 """
 from __future__ import annotations
 
@@ -227,7 +231,7 @@ async def fetch_loan_details(
 # 6. Bank policy context  (RAG — synchronous, no DB)
 # ---------------------------------------------------------------------------
 
-def fetch_bank_policy_context(query: str, top_k: int = 3) -> list[str]:
+def fetch_bank_policy_context(query: str, top_k: int = 3) -> list[str]:  # noqa: E501
     """
     Retrieve the most relevant bank policy chunks for a natural-language query.
 
@@ -250,4 +254,91 @@ def fetch_bank_rules_context(query: str, top_k: int = 3) -> list[str]:
     """
     chunks = retrieve_bank_rules(query, top_k=top_k)
     logger.debug("Rules context: %d chunks for query: %.60s", len(chunks), query)
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# 8. Tool: fetch_transactions_tool  (DB — full history + spending summary)
+# ---------------------------------------------------------------------------
+
+async def fetch_transactions_tool(db: AsyncSession, user_id: UUID) -> dict:
+    """
+    Fetch the full transaction history for a user and compute a spending summary.
+
+    Used by the router as the ``transaction_analysis`` context type when the
+    user asks for spending analysis, category breakdowns, or audits that need
+    more than the last 10 entries.
+
+    Returns
+    -------
+    {
+        "transactions": [...],        # full ledger entries, newest first
+        "summary": {
+            "total_credits": float,
+            "total_debits": float,
+            "net_balance_change": float,
+            "transaction_count": int,
+            "credit_count": int,
+            "debit_count": int,
+            "by_reference_type": { "<ref_type>": {"count": int, "total": float} }
+        }
+    }
+    """
+    entries = await fetch_transaction_context(db, user_id, limit=None)
+
+    total_credits = 0.0
+    total_debits = 0.0
+    credit_count = 0
+    debit_count = 0
+    by_ref: dict[str, dict] = {}
+
+    for e in entries:
+        amt = e["amount"]
+        ref = e.get("reference_type") or "OTHER"
+        if e["type"] == "CREDIT":
+            total_credits += amt
+            credit_count += 1
+        else:
+            total_debits += amt
+            debit_count += 1
+
+        if ref not in by_ref:
+            by_ref[ref] = {"count": 0, "total": 0.0}
+        by_ref[ref]["count"] += 1
+        by_ref[ref]["total"] = round(by_ref[ref]["total"] + amt, 2)
+
+    summary = {
+        "total_credits": round(total_credits, 2),
+        "total_debits": round(total_debits, 2),
+        "net_balance_change": round(total_credits - total_debits, 2),
+        "transaction_count": len(entries),
+        "credit_count": credit_count,
+        "debit_count": debit_count,
+        "by_reference_type": by_ref,
+    }
+
+    logger.debug(
+        "fetch_transactions_tool: %d entries fetched for user_id=%s", len(entries), user_id
+    )
+    return {"transactions": entries, "summary": summary}
+
+
+# ---------------------------------------------------------------------------
+# 9. Tool: fetch_bank_policy_document  (RAG — deeper retrieval, top_k=6)
+# ---------------------------------------------------------------------------
+
+def fetch_bank_policy_document(query: str) -> list[str]:
+    """
+    Deep retrieval over the bank_policies collection (top_k=6 chunks).
+
+    Used by the router as the ``bank_policy_document`` context type when the
+    user asks detailed policy questions that may need multiple policy sections
+    (e.g. fees + limits + process all in one answer).
+
+    Returns annotated text strings: [source | section | similarity]\\ntext
+    """
+    chunks = retrieve_bank_policies(query, top_k=6)
+    logger.debug(
+        "fetch_bank_policy_document: %d chunks for query: %.60s", len(chunks), query
+    )
     return chunks

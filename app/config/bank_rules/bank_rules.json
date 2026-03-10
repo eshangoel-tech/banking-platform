@@ -1,46 +1,136 @@
 {
   "_comment": "ADX Bank business rules — single source of truth for all banking constants. Loaded at startup by app/config/bank_rules.py.",
+  "_source": "ADX Bank internal operations. All values here are enforced by the application code.",
 
   "otp": {
     "max_attempts": 3,
-    "expiry_minutes": 5
+    "expiry_minutes": 5,
+    "length_digits": 6,
+    "delivery_channel": "email",
+    "types": ["EMAIL_VERIFY", "LOGIN", "TRANSFER", "ADD_MONEY", "LOAN_BOOK"],
+    "resend_policy": "A new OTP can be requested by restarting the flow (register / login again). There is no in-place resend button.",
+    "description": "OTPs are 6-digit numeric codes sent to the registered email address. Each OTP is valid for 5 minutes and allows a maximum of 3 verification attempts. After 3 failed attempts the OTP status is set to FAILED and a new one must be requested by restarting the flow."
   },
 
   "auth": {
     "max_login_attempts": 3,
     "account_block_duration_seconds": 3600,
+    "account_block_duration_human": "1 hour",
     "jwt_expiry_minutes": 30,
-    "password_reset_token_expiry_minutes": 15
+    "password_reset_token_expiry_minutes": 15,
+    "password_min_length": 8,
+    "session_persistence": "JWT + DB-persisted session row",
+    "two_step_login": "Step 1 verifies password; Step 2 verifies a LOGIN OTP sent to email.",
+    "description": "Login is a two-step process: password verification followed by an email OTP. After 3 consecutive failed password attempts the account is locked for 1 hour. JWT tokens expire after 30 minutes requiring re-login. Password reset links sent via email expire in 15 minutes. Minimum password length is 8 characters."
   },
 
   "wallet": {
-    "add_money_max_amount": 50000,
+    "add_money_min_amount_inr": 1,
+    "add_money_max_amount_per_transaction_inr": 50000,
+    "add_money_max_amount_per_day_inr": 100000,
+    "add_money_max_amount_per_month_inr": 500000,
+    "add_money_kyc_pending_monthly_limit_inr": 10000,
     "add_money_otp_ttl_seconds": 300,
     "add_money_redis_ttl_seconds": 300,
-    "currency": "INR"
+    "currency": "INR",
+    "transaction_fee": 0,
+    "process_steps": "Step 1 — initiate (enter amount, receive OTP). Step 2 — confirm (enter OTP to credit account).",
+    "description": "Add Money uses a secure two-step OTP process. Minimum ₹1, maximum ₹50,000 per transaction. Daily limit ₹1,00,000. Monthly limit ₹5,00,000. Accounts with KYC PENDING are restricted to ₹10,000 per month. Zero transaction fees. The OTP is valid for 5 minutes. The pending top-up session is stored for 5 minutes."
   },
 
   "transfer": {
+    "min_amount_inr": 1,
+    "max_amount_per_transaction_inr": 500000,
+    "max_amount_per_day_inr": 1000000,
     "otp_ttl_seconds": 300,
-    "min_amount": 1
+    "transfer_scope": "Intra-bank only — both sender and receiver must hold ADX Bank accounts.",
+    "processing_time": "Instant (real-time debit + credit)",
+    "availability": "24 hours a day, 7 days a week",
+    "transaction_fee": 0,
+    "kyc_block_threshold_inr": 50000,
+    "self_transfer_allowed": false,
+    "description": "Transfers are instant and available 24x7. Only intra-ADX-Bank transfers are supported (both accounts must be with ADX Bank). Minimum ₹1, maximum ₹5,00,000 per transaction, ₹10,00,000 per day. Accounts with KYC PENDING cannot send transfers above ₹50,000. Self-transfers (same account) are not allowed. Zero fees. OTP required for every transfer, valid 5 minutes."
   },
 
   "loan": {
-    "interest_rate_pa": 0.12,
+    "interest_rate_pa_decimal": 0.12,
+    "interest_rate_pa_percent": "12% per annum",
+    "interest_type": "Fixed rate on reducing balance",
+    "min_tenure_months": 1,
     "max_tenure_months": 24,
+    "max_loan_multiplier_of_monthly_salary": 12,
+    "min_monthly_salary_for_eligibility_inr": 10000,
+    "min_age_years": 21,
+    "loan_processing_fee_percent": 1,
     "booking_redis_ttl_seconds": 300,
-    "otp_ttl_seconds": 300
+    "otp_ttl_seconds": 300,
+    "emi_formula": "EMI = P × r × (1+r)^n / ((1+r)^n − 1)  where P = principal, r = monthly rate (12%/12/100 = 0.01), n = tenure in months",
+    "npa_trigger_overdue_days": 90,
+    "default_trigger_overdue_days": 30,
+    "foreclosure_fee": "Not currently applicable",
+    "description": "Personal loans at 12% p.a. fixed reducing-balance interest. Maximum eligible loan = 12× monthly salary (e.g. ₹10,000 salary → max ₹1,20,000). Tenure 1–24 months. A 1% processing fee is charged on the principal at disbursement. Minimum KYC-verified salary ₹10,000/month and minimum age 21. Loan booking ID valid for 5 minutes; OTP required to confirm. EMI calculated using the standard reducing-balance formula. Account is tagged as Default after 30 days overdue and NPA after 90 days."
   },
 
   "account": {
-    "joining_bonus_amount": 500,
+    "joining_bonus_amount_inr": 500,
+    "joining_bonus_trigger": "Credited automatically on successful email OTP verification",
     "salary_credit_delay_seconds": 120,
-    "default_type": "SAVINGS",
-    "default_currency": "INR"
+    "salary_credit_trigger": "Declared salary auto-credited ~2 minutes after account activation (demo feature)",
+    "default_account_type": "SAVINGS",
+    "default_currency": "INR",
+    "minimum_balance_inr": 0,
+    "kyc_documents_required": ["Aadhaar Card", "PAN Card"],
+    "min_age_years": 18,
+    "account_statuses": {
+      "active": "Fully operational; all transactions permitted",
+      "inactive": "Registered but email not verified; no transactions allowed",
+      "dormant": "No transactions for 12 consecutive months; contact support to reactivate",
+      "blocked": "Blocked due to suspicious activity or policy violation; contact support"
+    },
+    "description": "Zero minimum balance SAVINGS account in INR. ₹500 joining bonus credited immediately on email verification. Declared salary is auto-credited approximately 2 minutes after activation. Minimum age 18. KYC via Aadhaar and PAN. Account goes dormant after 12 months of inactivity."
+  },
+
+  "security": {
+    "password_hashing_algorithm": "bcrypt",
+    "otp_storage": "SHA-256 hash only — plaintext OTP never stored",
+    "token_algorithm": "HS256 JWT",
+    "sensitive_actions_requiring_otp": ["login", "fund_transfer", "add_money", "loan_booking"],
+    "session_token_expiry_minutes": 30,
+    "data_retention_post_closure_years": 7,
+    "description": "Passwords are bcrypt-hashed. OTPs are stored only as SHA-256 hashes — the plaintext OTP is never saved. JWT tokens use HS256 algorithm with a 30-minute expiry. Every sensitive action (login, transfer, add money, loan booking) requires OTP verification. Customer data is retained for 7 years after account closure per regulatory requirements."
+  },
+
+  "fees_and_charges": {
+    "account_opening_fee_inr": 0,
+    "fund_transfer_fee_inr": 0,
+    "add_money_fee_inr": 0,
+    "loan_processing_fee_percent": 1,
+    "loan_processing_fee_example": "1% of ₹1,00,000 loan = ₹1,000 deducted at disbursement",
+    "foreclosure_fee": "None currently specified",
+    "description": "ADX Bank charges ZERO fees for account opening, fund transfers, and add-money transactions. Loans carry a 1% processing fee on the principal, deducted at disbursement. No foreclosure or prepayment penalty is currently levied."
+  },
+
+  "support": {
+    "email": "support@adxbank.demo",
+    "hours": "Monday to Saturday, 9 AM – 6 PM IST",
+    "response_sla_hours": 24,
+    "channels": ["email"],
+    "grievance_escalation": "If unresolved within 24 hours, reply to the original support email with ESCALATE in the subject line.",
+    "description": "Customer support available via email at support@adxbank.demo, Monday to Saturday 9 AM–6 PM IST. Response guaranteed within 24 business hours. For escalations, reply to the original thread with ESCALATE in the subject."
   },
 
   "pagination": {
     "max_page_size": 50,
-    "default_page_size": 10
+    "default_page_size": 10,
+    "transactions_ai_fetch_default": 10,
+    "description": "API results are paginated at 10 items per page by default, with a maximum of 50 per page."
+  },
+
+  "compliance": {
+    "bank_type": "Digital-only demo bank (NOT a real regulated bank)",
+    "disclaimer": "ADX Bank is a demo application and NOT a real financial institution. No real money is involved.",
+    "data_retention_years": 7,
+    "re_kyc_frequency_years": 2,
+    "description": "ADX Bank is a demo/simulation platform and is not a real regulated bank. All transactions use demo balances. Customer data is retained for 7 years. Re-KYC is required every 2 years for active accounts."
   }
 }

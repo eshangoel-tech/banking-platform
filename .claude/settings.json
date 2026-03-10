@@ -13,7 +13,10 @@
       "Bash(/tmp/tree_output.txt:*)",
       "Read(//tmp/**)",
       "Bash(wc -l /home/eshan/banking-platform/app/services/ai/context_fetch.py /home/eshan/banking-platform/app/services/ai/rag/*.py /home/eshan/banking-platform/app/main.py)",
-      "Bash(grep -E \"\\\\.\\(py|json|txt\\)$\")"
+      "Bash(grep -E \"\\\\.\\(py|json|txt\\)$\")",
+      "Bash(python3 -m py_compile app/services/ai/context_fetch.py)",
+      "Bash(python3 -m py_compile app/services/ai/assistant_service.py)",
+      "Bash(python3 -m py_compile app/ai_agents/assistant/agent.py)"
     ],
     "additionalDirectories": [
       "/home/eshan/banking-platform",
