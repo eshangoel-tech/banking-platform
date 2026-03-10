@@ -53,7 +53,7 @@ Output ONLY valid JSON with exactly these two keys:
 Suggest an action when it helps the customer act on your findings:
 {tools_description}
 
-If no page navigation is needed, return an empty list for "suggest_actions".
+If no page navigation  is needed, return an empty list for "suggest_actions".
 """
 
 
