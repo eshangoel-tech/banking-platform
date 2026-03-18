@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Dev / editor
+.git/
+.gitignore
+.idea/
+.vscode/
+*.md
+
+# Secrets / local config
+.env
+.env.*
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+*.test
+
+# ChromaDB (rebuilt on container start)
+chroma_data/
+
+# Logs / temp
+*.log
+*.tmp
