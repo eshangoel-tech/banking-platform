@@ -9,13 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# CPU-only torch first (250MB vs 800MB CUDA build)
 RUN pip install --upgrade pip --root-user-action=ignore \
     && pip install --prefix=/install --no-cache-dir --root-user-action=ignore \
-        torch==2.2.2 --index-url https://download.pytorch.org/whl/cpu
-
-# Rest of dependencies
-RUN pip install --prefix=/install --no-cache-dir --root-user-action=ignore \
     -r requirements.txt
 
 

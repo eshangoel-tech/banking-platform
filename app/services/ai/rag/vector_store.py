@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import chromadb
 from chromadb import Collection
 
-from app.services.ai.rag.embedder import embed_texts
+from app.services.ai.rag.embedder import embed_texts, get_embedding_function
 from app.services.ai.rag.ingester import (
     Document,
     load_bank_policies_documents,
@@ -60,11 +60,9 @@ def _ingest_documents(collection: Collection, docs: list[Document]) -> None:
     metadatas = [{"source": d.source, "section": d.section} for d in docs]
 
     logger.info("Embedding %d chunks for collection '%s'...", len(docs), collection.name)
-    embeddings = embed_texts(texts)
 
     collection.add(
         ids=ids,
-        embeddings=embeddings,
         documents=texts,
         metadatas=metadatas,
     )
@@ -100,6 +98,7 @@ def initialize_vector_store() -> None:
         collection = client.create_collection(
             name=name,
             metadata={"hnsw:space": "cosine"},
+            embedding_function=get_embedding_function(),
         )
         _collections[name] = collection
         _ingest_documents(collection, loader())
@@ -112,5 +111,5 @@ def get_collection(name: str) -> Collection:
     if name not in _collections:
         # Lazy reconnect (e.g. tests that skip startup)
         client = _get_client()
-        _collections[name] = client.get_collection(name)
+        _collections[name] = client.get_collection(name, embedding_function=get_embedding_function())
     return _collections[name]

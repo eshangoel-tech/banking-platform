@@ -1,40 +1,37 @@
 """
-Embedding engine — singleton wrapper around sentence-transformers/all-MiniLM-L6-v2.
+Embedding engine — uses ChromaDB's built-in ONNX embedding function.
 
-The model is loaded once on first use (lazy) to avoid slowing down import time.
+Same model (all-MiniLM-L6-v2) as before but via onnxruntime instead of PyTorch.
+This avoids the 2GB torch dependency, keeping the Docker image under 2GB.
 """
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 logger = logging.getLogger(__name__)
 
-_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-_model: "SentenceTransformer | None" = None
+_ef: DefaultEmbeddingFunction | None = None
 
 
-def get_model() -> "SentenceTransformer":
-    """Return the singleton embedding model, loading it on first call."""
-    global _model
-    if _model is None:
-        logger.info("Loading embedding model: %s", _MODEL_NAME)
-        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-        _model = SentenceTransformer(_MODEL_NAME)
-        logger.info("Embedding model loaded.")
-    return _model
+def _get_ef() -> DefaultEmbeddingFunction:
+    global _ef
+    if _ef is None:
+        logger.info("Loading ONNX embedding function (all-MiniLM-L6-v2)...")
+        _ef = DefaultEmbeddingFunction()
+        logger.info("Embedding function ready.")
+    return _ef
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Encode a list of strings and return their embedding vectors."""
-    model = get_model()
-    embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-    return embeddings.tolist()
+    return list(_get_ef()(texts))
 
 
 def embed_query(text: str) -> list[float]:
-    """Encode a single query string."""
     return embed_texts([text])[0]
+
+
+def get_embedding_function() -> DefaultEmbeddingFunction:
+    """Return the singleton embedding function for use with ChromaDB collections."""
+    return _get_ef()
