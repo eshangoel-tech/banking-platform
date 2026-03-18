@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import asyncio
 import logging
+import os
 import traceback
 import uuid
 
@@ -34,9 +35,10 @@ app = FastAPI(
 app.add_middleware(HttpLoggingMiddleware)
 
 # CORS — must be added after other middleware so it runs outermost
+_FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[_FRONTEND_URL, "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,12 +53,25 @@ app.include_router(loan_v1_router, prefix="/api/v1/loan", tags=["loan"])
 app.include_router(ai_assistant_router, prefix="/api/v1/ai/assistant", tags=["ai-assistant"])
 
 
+logger = logging.getLogger(__name__)
+_rag_ready = False
+
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize application on startup."""
-    # RAG vector store: fresh embeddings for bank_rules + bank_policies
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, initialize_vector_store)
+    """Initialize application on startup — RAG runs in background so healthcheck passes immediately."""
+    asyncio.create_task(_init_rag_background())
+
+
+async def _init_rag_background():
+    global _rag_ready
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, initialize_vector_store)
+        _rag_ready = True
+        logger.info("RAG vector store ready.")
+    except Exception:
+        logger.exception("RAG initialization failed — AI assistant may not work.")
 
 
 @app.on_event("shutdown")
@@ -79,7 +94,11 @@ def health_check(request: Request):
     return {
         "success": True,
         "message": "Service is healthy.",
-        "data": {"service": "banking-platform", "status": "healthy"},
+        "data": {
+            "service": "banking-platform",
+            "status": "healthy",
+            "rag_ready": _rag_ready,
+        },
         "request_id": str(getattr(request.state, "request_id", "")),
     }
 
