@@ -56,19 +56,28 @@ class TransferService:
     # Step 1: initiate
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _mask_account(account_number: str) -> str:
+        """ADX0000123 → ADX****123"""
+        if len(account_number) <= 6:
+            return account_number
+        return account_number[:3] + "****" + account_number[-3:]
+
     async def initiate_transfer(
         self,
         db: AsyncSession,
         *,
         user: User,
         session_id: UUID,
-        receiver_account_number: str,
+        to_account_number: str | None,
+        to_phone: str | None,
         amount: Decimal,
     ) -> dict:
         """
         Validate accounts, create a PENDING transfer, issue a TRANSFER OTP.
 
-        Returns {'transfer_id': str}
+        Receiver can be identified by account number OR phone number.
+        Returns transfer_id + masked receiver info.
         """
         # -- Fetch sender account
         sender_account = await self.repo.get_account_by_user_id(db, user.id)
@@ -78,10 +87,12 @@ class TransferService:
         if sender_account.status != "ACTIVE":
             raise account_not_active("Your account is not active")
 
-        # -- Fetch receiver account
-        receiver_account = await self.repo.get_account_by_number(
-            db, receiver_account_number
-        )
+        # -- Fetch receiver account (by account number or phone)
+        if to_account_number:
+            receiver_account = await self.repo.get_account_by_number(db, to_account_number)
+        else:
+            receiver_account = await self.repo.get_account_by_phone(db, to_phone)
+
         if not receiver_account:
             raise not_found("Receiver account")
 
@@ -137,7 +148,16 @@ class TransferService:
                 extra={"user_id": str(user.id), "transfer_id": str(transfer.id)},
             )
 
-        return {"transfer_id": str(transfer.id)}
+        # -- Fetch receiver name for response
+        receiver_user = await self.repo.get_user_by_id(db, receiver_account.user_id)
+        receiver_name = receiver_user.full_name if receiver_user else "Unknown"
+
+        return {
+            "transfer_id": str(transfer.id),
+            "receiver_name": receiver_name,
+            "receiver_account": self._mask_account(receiver_account.account_number),
+            "amount": str(amount),
+        }
 
     # ------------------------------------------------------------------
     # Step 2: confirm

@@ -15,6 +15,7 @@ from app.repository.models.audit_log import AuditLog
 from app.repository.models.ledger_entry import LedgerEntry
 from app.repository.models.otp_verification import OtpVerification
 from app.repository.models.transfer import Transfer
+from app.repository.models.user import User
 
 
 class TransferRepository:
@@ -29,6 +30,23 @@ class TransferRepository:
         res = await db.execute(
             select(Account).where(Account.account_number == account_number)
         )
+        return res.scalar_one_or_none()
+
+    async def get_account_by_phone(
+        self, db: AsyncSession, phone: str
+    ) -> Optional[Account]:
+        """Lookup receiver account via their registered phone number."""
+        res = await db.execute(
+            select(Account)
+            .join(User, Account.user_id == User.id)
+            .where(User.phone == phone)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_user_by_id(
+        self, db: AsyncSession, user_id: UUID
+    ) -> Optional[User]:
+        res = await db.execute(select(User).where(User.id == user_id))
         return res.scalar_one_or_none()
 
     async def get_account_by_user_id(

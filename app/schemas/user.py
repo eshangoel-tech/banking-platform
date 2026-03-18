@@ -98,10 +98,19 @@ class TransactionListResponse(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    address: Optional[str] = None
+    address: Optional[AddressSchema] = None
     phone: Optional[str] = Field(None, min_length=6, max_length=20)
 
 
 class UpdateProfileResponse(BaseModel):
     success: bool
     message: str
+
+
+class GetProfileResponse(BaseModel):
+    full_name: str
+    email: str
+    phone: str
+    salary: Optional[str]
+    kyc_status: str
+    address: Optional[AddressSchema]

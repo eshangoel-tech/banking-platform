@@ -74,6 +74,18 @@ async def list_transactions(
 # Profile
 # ---------------------------------------------------------------------------
 
+@router.get("/user/profile")
+async def get_profile(
+    request: Request,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the authenticated user's current profile for pre-filling the edit form."""
+    service = UserService()
+    data = await service.get_profile(auth.user)
+    return ok_response(request, "Profile retrieved successfully.", data=data)
+
+
 @router.put("/user/profile")
 async def update_profile(
     request: Request,
@@ -87,6 +99,6 @@ async def update_profile(
         user=auth.user,
         session_id=auth.session_id,
         phone=payload.phone,
-        address=payload.address,
+        address=payload.address.model_dump(exclude_none=True) if payload.address else None,
     )
     return ok_response(request, "Profile updated successfully.")

@@ -101,6 +101,7 @@ _OTP_SUBJECTS: dict[str, str] = {
     "TRANSFER": "ADX Bank — Transfer OTP",
     "ADD_MONEY": "ADX Bank — Add Money OTP",
     "LOAN_BOOK": "ADX Bank — Loan confirmation OTP",
+    "LOAN_PAY": "ADX Bank — EMI payment OTP",
 }
 
 

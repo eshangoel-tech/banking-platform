@@ -61,6 +61,39 @@ logger = logging.getLogger(__name__)
 
 _REDIS_KEY = "ai_context:{chat_sess_id}"
 
+# ---------------------------------------------------------------------------
+# Pipeline trace — pretty terminal output for dev visibility
+# ---------------------------------------------------------------------------
+
+_C = {
+    "reset":  "\033[0m",
+    "bold":   "\033[1m",
+    "dim":    "\033[2m",
+    "cyan":   "\033[96m",
+    "green":  "\033[92m",
+    "yellow": "\033[93m",
+    "blue":   "\033[94m",
+    "magenta":"\033[95m",
+    "red":    "\033[91m",
+    "white":  "\033[97m",
+}
+
+
+def _trace(label: str, color: str, lines: list[str]) -> None:
+    """Print a framed pipeline trace block to stdout."""
+    c = _C.get(color, "")
+    r = _C["reset"]
+    d = _C["dim"]
+    w = 72
+    header = f" {label} "
+    pad_total = w - len(header)
+    pad_l = pad_total // 2
+    pad_r = pad_total - pad_l
+    print(f"\n{c}{'─' * pad_l}{header}{'─' * pad_r}{r}")
+    for line in lines:
+        print(f"  {d}{line}{r}")
+    print(f"{c}{'─' * w}{r}")
+
 # Maps router agent names → domain agent respond() functions
 _DOMAIN_AGENTS = {
     "bank_manager": bank_manager_respond,
@@ -96,12 +129,12 @@ class AssistantService:
         """
         repo = ChatRepository()
 
-        async with db.begin():
-            chat_session = await repo.create_session(
-                db,
-                customer_id=user.customer_id,
-                session_id=auth_session_id,
-            )
+        chat_session = await repo.create_session(
+            db,
+            customer_id=user.customer_id,
+            session_id=auth_session_id,
+        )
+        await db.commit()
 
         # Fetch context outside the transaction (read-only)
         user_ctx = await fetch_user_context(db, user.id)
@@ -121,7 +154,10 @@ class AssistantService:
             chat_session.chat_sess_id,
             user.customer_id,
         )
-        return {"chat_sess_id": str(chat_session.chat_sess_id)}
+        return {
+            "chat_sess_id": str(chat_session.chat_sess_id),
+            "chat_history": chat_history,
+        }
 
     async def process_chat(
         self,
@@ -145,7 +181,12 @@ class AssistantService:
             raise chat_session_expired()
         redis_context: dict = json.loads(raw)
 
+        import time as _time
+        _t0 = _time.monotonic()
+
         all_llm_results: list[LLMCallResult] = []
+
+        _trace("USER MESSAGE", "cyan", [message])
 
         # 2. Layer 1 — Router ------------------------------------------------
         decisions, router_llm = await asyncio.to_thread(
@@ -159,6 +200,20 @@ class AssistantService:
         domain_decisions = [d for d in decisions if d.agent in _DOMAIN_AGENTS]
         receptionist_decisions = [d for d in decisions if d.agent == "receptionist"]
 
+        router_lines = []
+        for d in decisions:
+            ctx = ", ".join(d.context) or "none"
+            act = ", ".join(d.action) or "none"
+            router_lines.append(
+                f"→ [{d.agent.upper()}]  query: \"{d.text[:80]}\""
+            )
+            router_lines.append(f"    context: [{ctx}]  actions: [{act}]")
+        _trace(
+            f"ROUTER  ({router_llm.latency_ms}ms · {router_llm.token_input}in/{router_llm.token_output}out)",
+            "yellow",
+            router_lines,
+        )
+
         # 4. Layer 2 — Domain agents (concurrent) ----------------------------
         agent_responses: list[AgentResponse] = []
 
@@ -169,15 +224,25 @@ class AssistantService:
                 resp_text, suggest_actions, llm_result = await asyncio.to_thread(
                     agent_fn, decision.text, context_data
                 )
-                return (
-                    AgentResponse(
-                        agent=decision.agent,
-                        query=decision.text,
-                        response=resp_text,
-                        suggest_actions=suggest_actions,
-                    ),
-                    llm_result,
+                ar = AgentResponse(
+                    agent=decision.agent,
+                    query=decision.text,
+                    response=resp_text,
+                    suggest_actions=suggest_actions,
                 )
+                _trace(
+                    f"AGENT: {decision.agent.upper()}  ({llm_result.latency_ms}ms · {llm_result.token_input}in/{llm_result.token_output}out)",
+                    "blue",
+                    [
+                        f"query   : {decision.text[:100]}",
+                        f"response: {resp_text[:300]}",
+                        *(
+                            [f"actions : {', '.join(suggest_actions)}"]
+                            if suggest_actions else []
+                        ),
+                    ],
+                )
+                return ar, llm_result
 
             domain_results = await asyncio.gather(
                 *[_run_domain(d) for d in domain_decisions]
@@ -196,32 +261,47 @@ class AssistantService:
             message,
             agent_responses,
             receptionist_tasks,
+            redis_context.get("chat_history", []),
         )
         all_llm_results.append(receptionist_llm)
 
+        _trace(
+            f"RECEPTIONIST  ({receptionist_llm.latency_ms}ms · {receptionist_llm.token_input}in/{receptionist_llm.token_output}out)",
+            "magenta",
+            [
+                f"response: {final_response[:300]}",
+                *(
+                    [f"actions : {', '.join(a['name'] for a in redirect_actions)}"]
+                    if redirect_actions else []
+                ),
+            ],
+        )
+        _elapsed_ms = int((_time.monotonic() - _t0) * 1000)
+        _trace(f"PIPELINE DONE  total={_elapsed_ms}ms", "green", [])
+
         # 6. Persist to DB ---------------------------------------------------
-        async with db.begin():
-            repo = ChatRepository()
-            chat_resp = await repo.create_response(
+        repo = ChatRepository()
+        chat_resp = await repo.create_response(
+            db,
+            chat_sess_id=chat_sess_id,
+            user_message=message,
+            assistant_response=final_response,
+        )
+        for llm_r in all_llm_results:
+            await repo.create_llm_interaction(
                 db,
-                chat_sess_id=chat_sess_id,
-                user_message=message,
-                assistant_response=final_response,
+                response_id=chat_resp.response_id,
+                agent_name=llm_r.agent_name,
+                request=llm_r.request_text,
+                response=llm_r.response_text,
+                status=llm_r.status,
+                error_msg=llm_r.error_msg,
+                token_input=llm_r.token_input,
+                token_output=llm_r.token_output,
+                context_attached=llm_r.context_attached,
+                latency_ms=llm_r.latency_ms,
             )
-            for llm_r in all_llm_results:
-                await repo.create_llm_interaction(
-                    db,
-                    response_id=chat_resp.response_id,
-                    agent_name=llm_r.agent_name,
-                    request=llm_r.request_text,
-                    response=llm_r.response_text,
-                    status=llm_r.status,
-                    error_msg=llm_r.error_msg,
-                    token_input=llm_r.token_input,
-                    token_output=llm_r.token_output,
-                    context_attached=llm_r.context_attached,
-                    latency_ms=llm_r.latency_ms,
-                )
+        await db.commit()
 
         # 7. Update Redis chat history ----------------------------------------
         chat_history: list[dict] = redis_context.get("chat_history", [])
@@ -248,8 +328,8 @@ class AssistantService:
         """
         repo = ChatRepository()
 
-        async with db.begin():
-            await repo.close_session(db, chat_sess_id)
+        await repo.close_session(db, chat_sess_id)
+        await db.commit()
 
         redis_key = _REDIS_KEY.format(chat_sess_id=str(chat_sess_id))
         redis.delete(redis_key)

@@ -21,6 +21,14 @@ from app.common.utils.exceptions import (
     otp_expired,
 )
 from app.common.utils.otp import generate_otp, hash_otp, send_otp_email
+from app.config.bank_rules.bank_rules import (
+    LOAN_ALLOWED_TENURES,
+    LOAN_BOOKING_REDIS_TTL_SECONDS,
+    LOAN_INTEREST_RATE_PA,
+    LOAN_MIN_AMOUNT,
+    LOAN_MIN_SALARY,
+    LOAN_PROCESSING_FEE_PERCENT,
+)
 from app.config.redis import get_redis
 from app.repository.core.loan_repository.repository import LoanRepository
 from app.repository.models.audit_log import AuditLog
@@ -29,16 +37,22 @@ from app.repository.models.user import User
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants (sourced from bank_rules.json via bank_rules.py)
 # ---------------------------------------------------------------------------
 
-_LOAN_INTEREST_RATE = Decimal("12.00")   # annual %
-_LOAN_MAX_TENURE = 24                    # months
-_BOOKING_TTL_SECONDS = 300               # 5 minutes
+_LOAN_INTEREST_RATE = Decimal(str(LOAN_INTEREST_RATE_PA * 100))  # 0.12 → 12.00 annual %
+_LOAN_ALLOWED_TENURES = LOAN_ALLOWED_TENURES
+_LOAN_MIN_AMOUNT = Decimal(str(LOAN_MIN_AMOUNT))
+_LOAN_MIN_SALARY = Decimal(str(LOAN_MIN_SALARY))
+_BOOKING_TTL_SECONDS = LOAN_BOOKING_REDIS_TTL_SECONDS
 
 
 def _booking_key(booking_id: str) -> str:
     return f"loan_booking:{booking_id}"
+
+
+def _pay_key(pay_id: str) -> str:
+    return f"loan_pay:{pay_id}"
 
 
 def _calculate_emi(
@@ -83,26 +97,45 @@ class LoanService:
             event_metadata=metadata,
         )
 
-    def _check_eligibility(self, user: User, amount: Decimal | None = None) -> Decimal:
-        """
-        Validate salary > 0 and, optionally, that amount <= max_eligible.
-        Returns max_eligible amount.
-        Raises AppException(400) if not eligible.
-        """
-        if not user.salary or Decimal(str(user.salary)) <= 0:
+    def _check_salary_eligible(self, user: User) -> Decimal:
+        """Validate salary >= min_salary. Returns max_eligible amount."""
+        if not user.salary or Decimal(str(user.salary)) < _LOAN_MIN_SALARY:
             raise AppException(
                 code="LOAN_NOT_ELIGIBLE",
-                message="You are not eligible for a loan. Please update your salary information.",
+                message=f"You are not eligible for a loan. Minimum monthly salary required is INR {_LOAN_MIN_SALARY}.",
                 http_status=400,
             )
-        max_amt = _max_eligible(user.salary)
-        if amount is not None and amount > max_amt:
-            raise AppException(
-                code="LOAN_AMOUNT_EXCEEDS_ELIGIBLE",
-                message=f"Requested amount exceeds your maximum eligible loan amount of INR {max_amt}.",
-                http_status=400,
-            )
-        return max_amt
+        return _max_eligible(user.salary)
+
+    async def _check_eligibility(
+        self, db: AsyncSession, user: User, amount: Decimal | None = None
+    ) -> tuple[Decimal, Decimal]:
+        """
+        Validate salary and existing loans. Returns (max_eligible, available_amount).
+        available_amount = max_eligible - total_outstanding_on_active_loans.
+        Raises AppException(400) if not eligible or amount not feasible.
+        """
+        max_amt = self._check_salary_eligible(user)
+        total_outstanding = await self.repo.get_total_outstanding_by_user(db, user.id)
+        available = max(Decimal("0"), max_amt - total_outstanding)
+
+        if amount is not None:
+            if amount < _LOAN_MIN_AMOUNT:
+                raise AppException(
+                    code="LOAN_AMOUNT_TOO_LOW",
+                    message=f"Minimum loan amount is INR {_LOAN_MIN_AMOUNT}.",
+                    http_status=400,
+                )
+            if amount > available:
+                raise AppException(
+                    code="LOAN_AMOUNT_EXCEEDS_ELIGIBLE",
+                    message=(
+                        f"Requested amount exceeds your available loan limit of INR {available}. "
+                        f"You have INR {total_outstanding} outstanding across existing loans."
+                    ),
+                    http_status=400,
+                )
+        return max_amt, available
 
     # ------------------------------------------------------------------
     # GET /loan/eligibility
@@ -115,11 +148,16 @@ class LoanService:
         user: User,
         session_id: UUID,
     ) -> dict:
-        max_amt = self._check_eligibility(user)
+        max_amt, available = await self._check_eligibility(db, user)
+        total_outstanding = max_amt - available  # = sum of active+pending loans
         return {
+            "min_loan_amount": str(_LOAN_MIN_AMOUNT),
             "max_eligible_amount": str(max_amt.quantize(Decimal("0.01"))),
+            "existing_loan_outstanding": str(total_outstanding.quantize(Decimal("0.01"))),
+            "available_loan_amount": str(available.quantize(Decimal("0.01"))),
+            "allowed_tenures": _LOAN_ALLOWED_TENURES,
             "interest_rate": str(_LOAN_INTEREST_RATE),
-            "max_tenure_months": _LOAN_MAX_TENURE,
+            "processing_fee_percent": LOAN_PROCESSING_FEE_PERCENT,
         }
 
     # ------------------------------------------------------------------
@@ -135,7 +173,7 @@ class LoanService:
         amount: Decimal,
         tenure_months: int,
     ) -> dict:
-        self._check_eligibility(user, amount)
+        await self._check_eligibility(db, user, amount)
         emi = _calculate_emi(amount, _LOAN_INTEREST_RATE, tenure_months)
         total_payable = (emi * tenure_months).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -170,7 +208,7 @@ class LoanService:
         amount: Decimal,
         tenure_months: int,
     ) -> dict:
-        self._check_eligibility(user, amount)
+        await self._check_eligibility(db, user, amount)
 
         # Fetch account to store account_id in Redis booking
         account = await self.repo.get_account_by_user_id(db, user.id)
@@ -348,10 +386,10 @@ class LoanService:
         return {"loans": items}
 
     # ------------------------------------------------------------------
-    # POST /loan/{loan_id}/pay
+    # POST /loan/{loan_id}/pay/initiate  (Step 1)
     # ------------------------------------------------------------------
 
-    async def pay_loan(
+    async def initiate_pay_loan(
         self,
         db: AsyncSession,
         *,
@@ -370,42 +408,150 @@ class LoanService:
                 http_status=400,
             )
 
-        # Pay the smaller of EMI or remaining outstanding
         payment_amount = min(loan.emi_amount, loan.outstanding_amount)
 
-        # Lock the account row (implicit transaction already open from reads above)
-        account = await self.repo.get_account_for_update(db, loan.account_id)
+        # Pre-flight balance check (no lock — just informational)
+        account = await self.repo.get_account_by_user_id(db, user.id)
         if account is None:
             raise not_found("Account")
-
         if account.balance < payment_amount:
             raise insufficient_balance(
                 "Insufficient wallet balance to pay loan EMI. Please add money first."
             )
 
-        # Atomic debit + new balance via RETURNING
-        new_balance = await self.repo.debit_account_balance(
-            db, account.id, payment_amount
+        # Store pay session in Redis (5-min TTL)
+        pay_id = str(uuid.uuid4())
+        pay_data = json.dumps({
+            "user_id": str(user.id),
+            "loan_id": str(loan_id),
+            "account_id": str(loan.account_id),
+            "payment_amount": str(payment_amount),
+        })
+        redis = get_redis()
+        await asyncio.to_thread(
+            lambda: redis.set(_pay_key(pay_id), pay_data, ex=_BOOKING_TTL_SECONDS)
         )
 
-        # Update loan outstanding; close if fully repaid
+        # Generate OTP
+        otp_plain = generate_otp()
+        otp_hash = hash_otp(otp_plain)
+        expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+        await self.repo.create_emi_pay_otp(
+            db,
+            user_id=user.id,
+            otp_hash=otp_hash,
+            expires_at=expires_at,
+            pay_id=UUID(pay_id),
+        )
+        db.add(
+            self._audit(
+                user_id=user.id,
+                session_id=session_id,
+                event_type="LOAN_PAY_INITIATED",
+                metadata={
+                    "pay_id": pay_id,
+                    "loan_id": str(loan_id),
+                    "payment_amount": str(payment_amount),
+                },
+            )
+        )
+        await db.commit()
+
+        # Send OTP email (best-effort)
+        try:
+            await send_otp_email(user.email, otp_plain, otp_type="LOAN_PAY")
+        except Exception:
+            logger.exception(
+                "Failed to send EMI pay OTP email",
+                extra={"user_id": str(user.id)},
+            )
+
+        return {
+            "pay_id": pay_id,
+            "emi_amount": str(payment_amount),
+            "outstanding_amount": str(loan.outstanding_amount),
+            "message": "OTP sent to your registered email. Please confirm within 5 minutes.",
+        }
+
+    # ------------------------------------------------------------------
+    # POST /loan/{loan_id}/pay/confirm  (Step 2)
+    # ------------------------------------------------------------------
+
+    async def confirm_pay_loan(
+        self,
+        db: AsyncSession,
+        *,
+        user: User,
+        session_id: UUID,
+        loan_id: UUID,
+        pay_id: str,
+        otp: str,
+    ) -> dict:
+        # Retrieve pay session from Redis
+        redis = get_redis()
+        raw = await asyncio.to_thread(redis.get, _pay_key(pay_id))
+        if raw is None:
+            raise AppException(
+                code="LOAN_PAY_EXPIRED",
+                message="Payment session has expired. Please initiate a new EMI payment.",
+                http_status=410,
+            )
+        pay_data = json.loads(raw)
+
+        if pay_data["user_id"] != str(user.id) or pay_data["loan_id"] != str(loan_id):
+            raise not_found("Payment session")
+
+        pay_uuid = UUID(pay_id)
+        now = datetime.utcnow()
+
+        # Validate OTP
+        otp_record = await self.repo.get_valid_emi_pay_otp(
+            db, user_id=user.id, pay_id=pay_uuid, now=now
+        )
+        if otp_record is None:
+            raise otp_expired()
+
+        if otp_record.otp_hash != hash_otp(otp):
+            otp_record = await self.repo.increment_otp_attempts(db, otp_record)
+            if otp_record.status == "FAILED":
+                raise max_otp_attempts()
+            raise invalid_otp()
+
+        payment_amount = Decimal(pay_data["payment_amount"])
+        account_id = UUID(pay_data["account_id"])
+
+        # Lock account row for atomic debit
+        account = await self.repo.get_account_for_update(db, account_id)
+        if account is None:
+            raise not_found("Account")
+        if account.balance < payment_amount:
+            raise insufficient_balance(
+                "Insufficient wallet balance to pay loan EMI. Please add money first."
+            )
+
+        # Atomic debit
+        new_balance = await self.repo.debit_account_balance(db, account_id, payment_amount)
+
+        # Fetch current loan outstanding
+        loan = await self.repo.get_loan_by_id(db, loan_id)
         new_outstanding = loan.outstanding_amount - payment_amount
         new_status = "CLOSED" if new_outstanding <= 0 else "ACTIVE"
-        await self.repo.update_loan_outstanding(
-            db, loan.id, new_outstanding, status=new_status
-        )
 
-        # Ledger entry
+        await self.repo.update_loan_outstanding(db, loan_id, new_outstanding, status=new_status)
+
         await self.repo.create_ledger_entry(
             db,
-            account_id=account.id,
+            account_id=account_id,
             entry_type="DEBIT",
             amount=payment_amount,
             balance_after=new_balance,
             reference_type="LOAN_PAYMENT",
-            reference_id=loan.id,
-            description=f"EMI payment for loan {loan.id}",
+            reference_id=loan_id,
+            description=f"EMI payment for loan {loan_id}",
         )
+
+        await self.repo.mark_otp_verified(db, otp_record.id)
 
         db.add(
             self._audit(
@@ -413,7 +559,8 @@ class LoanService:
                 session_id=session_id,
                 event_type="LOAN_PAYMENT_MADE",
                 metadata={
-                    "loan_id": str(loan.id),
+                    "loan_id": str(loan_id),
+                    "pay_id": pay_id,
                     "amount_paid": str(payment_amount),
                     "outstanding_after": str(new_outstanding),
                     "loan_status": new_status,
@@ -422,8 +569,11 @@ class LoanService:
         )
         await db.commit()
 
+        # Clean up Redis session
+        await asyncio.to_thread(redis.delete, _pay_key(pay_id))
+
         return {
-            "loan_id": str(loan.id),
+            "loan_id": str(loan_id),
             "amount_paid": str(payment_amount),
             "outstanding_after": str(new_outstanding),
             "loan_status": new_status,

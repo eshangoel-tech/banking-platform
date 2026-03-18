@@ -39,10 +39,10 @@ POST /api/v1/auth/register
   "email": "arjun@example.com",
   "phone": "9876543210",
   "password": "SecurePass123",
-  "address": { "city": "Mumbai", "state": "Maharashtra" },
   "salary": 50000
 }
 ```
+> `salary` is optional. Used for loan eligibility calculation.
 
 ---
 
@@ -52,7 +52,7 @@ POST /api/v1/auth/verify-email
 ```
 - Validates OTP
 - Activates user (`status=ACTIVE`, `kyc_status=VERIFIED`)
-- Creates a bank account automatically
+- Creates a SAVINGS bank account automatically
 - Fires Celery task → credits ₹500 joining bonus + sends welcome email
 
 **Request body:**
@@ -66,14 +66,15 @@ POST /api/v1/auth/verify-email
 ```
 POST /api/v1/auth/login
 ```
-- Verifies email + password
-- Sends a 6-digit LOGIN OTP to email
+- Verifies identifier + password
+- Sends a 6-digit LOGIN OTP to registered email
 - Blocks account for **1 hour** after 3 consecutive wrong passwords
 
 **Request body:**
 ```json
-{ "email": "arjun@example.com", "password": "SecurePass123" }
+{ "identifier": "arjun@example.com", "password": "SecurePass123" }
 ```
+> `identifier` can be **email**, **phone number**, or **customer_id**.
 
 ---
 
@@ -87,12 +88,16 @@ POST /api/v1/auth/verify-login-otp
 
 **Request body:**
 ```json
-{ "email": "arjun@example.com", "otp": "654321" }
+{ "identifier": "arjun@example.com", "otp": "654321" }
 ```
 
 **Response includes:**
 ```json
-{ "token": "<jwt>", "session_id": "<uuid>" }
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "session_id": "<uuid>"
+}
 ```
 
 ---
@@ -126,7 +131,7 @@ POST /api/v1/auth/reset-password
 
 ## 2. User & Account Module
 
-All endpoints require **`Authorization: Bearer <jwt>`** header.
+All endpoints require **`Authorization: Bearer <access_token>`** header.
 
 ### Dashboard Summary
 ```
@@ -140,7 +145,7 @@ Returns account balance, recent transactions count, active loans, and user profi
 ```
 GET /api/v1/account/details
 ```
-Full account info: account number, type, balance, currency, status.
+Full account info: account number, type (SAVINGS), balance, currency (INR), status.
 
 ---
 
@@ -171,6 +176,11 @@ Update phone number and/or address.
 
 Prefix: `/api/v1/transfer` | Requires JWT
 
+**Limits:**
+- Min: ₹1 | Max per transaction: ₹5,00,000 | Daily limit: ₹10,00,000
+- Intra-bank only (both accounts must be ADX Bank accounts)
+- Self-transfers not allowed | Zero fees | Instant 24x7
+
 ### Initiate Transfer (Step 1)
 ```
 POST /api/v1/transfer/initiate
@@ -178,7 +188,7 @@ POST /api/v1/transfer/initiate
 - Validates sender/receiver accounts
 - Checks sufficient balance
 - Stores transfer as PENDING
-- Sends a TRANSFER OTP to sender's email
+- Sends a TRANSFER OTP to sender's email (valid 5 minutes)
 
 ```json
 {
@@ -211,13 +221,17 @@ POST /api/v1/transfer/confirm
 
 Prefix: `/api/v1/wallet` | Requires JWT
 
-> Razorpay has been removed. All top-ups are OTP-verified.
+**Limits:**
+- Min: ₹1 | Max per transaction: ₹50,000
+- Daily limit: ₹1,00,000 | Monthly limit: ₹5,00,000
+- KYC PENDING accounts: monthly limit ₹10,000
+- Zero fees
 
 ### Initiate Add Money (Step 1)
 ```
 POST /api/v1/wallet/add-money/initiate
 ```
-- Validates amount (max ₹50,000 per transaction)
+- Validates amount
 - Stores top-up request in Redis (key: `wallet_topup:{topup_id}`, TTL 5 minutes)
 - Sends ADD_MONEY OTP to email
 
@@ -247,11 +261,35 @@ POST /api/v1/wallet/add-money/confirm
 
 Prefix: `/api/v1/loan` | Requires JWT
 
+**Key rules:**
+- Interest rate: **12% p.a.** (fixed, reducing balance)
+- Max loan: **salary × 12** (e.g. ₹50,000 salary → max ₹6,00,000)
+- Min loan: **₹1,000**
+- Allowed tenures: **6, 12, 18, 24, 36, 48 months** (only these values accepted)
+- Processing fee: **1%** of principal (deducted at disbursement)
+- Minimum salary for eligibility: ₹10,000/month
+- EMI formula: `P × r × (1+r)^n / ((1+r)^n − 1)` where `r = 0.01` (monthly rate)
+
 ### Check Eligibility
 ```
 GET /api/v1/loan/eligibility
 ```
-Returns max eligible loan amount (`salary × 12`) and whether the customer qualifies.
+Returns all loan constraints the UI needs to render the loan form.
+
+**Sample response (salary ₹50,000):**
+```json
+{
+  "success": true,
+  "message": "Loan eligibility fetched.",
+  "data": {
+    "min_loan_amount": "1000",
+    "max_eligible_amount": "600000.00",
+    "allowed_tenures": [6, 12, 18, 24, 36, 48],
+    "interest_rate": "12.00",
+    "processing_fee_percent": 1
+  }
+}
+```
 
 ---
 
@@ -261,11 +299,26 @@ POST /api/v1/loan/simulate
 ```
 Calculates EMI for a given principal + tenure. Saves a simulation record.
 
+> `tenure_months` must be one of: **6, 12, 18, 24, 36, 48**
+
 ```json
 { "amount": 100000, "tenure_months": 12 }
 ```
 
-Returns `emi_amount`, `total_payable`, `interest_amount`.
+**Sample response:**
+```json
+{
+  "success": true,
+  "message": "Loan simulation completed.",
+  "data": {
+    "amount": "100000",
+    "tenure_months": 12,
+    "interest_rate": "12.00",
+    "emi_amount": "8884.88",
+    "total_payable": "106618.56"
+  }
+}
+```
 
 ---
 
@@ -276,6 +329,8 @@ POST /api/v1/loan/book
 - Validates eligibility
 - Stores booking in Redis (TTL 5 minutes)
 - Sends LOAN_BOOK OTP to email
+
+> `tenure_months` must be one of: **6, 12, 18, 24, 36, 48**
 
 ```json
 { "amount": 100000, "tenure_months": 12 }
@@ -311,7 +366,7 @@ Returns all loans (PENDING / ACTIVE / CLOSED) newest first.
 ```
 POST /api/v1/loan/{loan_id}/pay
 ```
-- Deducts `min(emi_amount, outstanding_amount)` from wallet
+- Deducts `min(emi_amount, outstanding_amount)` from account balance
 - Creates DEBIT ledger entry (reference_type=LOAN_EMI)
 - Closes loan when `outstanding_amount` reaches zero
 
@@ -330,10 +385,10 @@ User message
 Layer 1 — Router (assistant agent)
      │  Splits into sub-queries. Assigns each to the right agent + context.
      ▼
-Layer 2 — Domain agents (run in parallel)
-     │  bank_manager  → account queries + financial advice
-     │  loan_officer  → loan eligibility, EMI, comparison
-     │  accountant    → payment issues, transaction analysis
+Layer 2 — Domain agents (run in parallel via asyncio.gather)
+     │  bank_manager  → account balance, transactions, account queries
+     │  loan_officer  → loan eligibility, EMI, loan status
+     │  accountant    → spending analysis, payment issues, financial summaries
      │  support       → policy/rules questions + troubleshooting (uses RAG)
      ▼
 Layer 3 — Receptionist
@@ -389,10 +444,10 @@ Runs the full multi-agent pipeline.
 
 | Question type | Agent |
 |---|---|
-| Account blocked, summary, charges | bank_manager |
-| Loan eligibility, EMI, rejection | loan_officer |
-| Payment failed, where did money go | accountant |
-| Interest calculation, foreclosure, OTP not received | support |
+| Account balance, summary, blocked account | bank_manager |
+| Loan eligibility, EMI calculation, rejection | loan_officer |
+| Payment failed, spending analysis, where did money go | accountant |
+| Interest rates, OTP not received, policy questions | support |
 | Greetings, "yes" to redirect, unclear text | receptionist |
 
 **Redirect action buttons:**
@@ -429,7 +484,7 @@ Celery workers process two types of async tasks:
 
 ### Account On-boarding (triggered on email verification)
 1. **Immediately:** Credits ₹500 joining bonus → ledger entry + audit log → sends welcome email
-2. **After 2 minutes:** Credits user's monthly salary → ledger entry → sends salary email
+2. **After 2 minutes:** Credits user's declared monthly salary → ledger entry → sends salary email
 
 ### Loan Auto-Approval
 - Triggered after loan confirmation
@@ -460,7 +515,7 @@ using semantic search and injects them as context into its LLM prompt.
 - Python 3.10+
 - PostgreSQL 14+
 - Redis 6+
-- An OpenAI API key (for the AI assistant)
+- At least one AI API key: **Groq** (free), OpenAI, or Anthropic/Claude
 
 ---
 
@@ -486,31 +541,41 @@ pip install -r requirements.txt
 ---
 
 ### Step 3 — Configure Environment
-```bash
-cp .env.example .env
-```
 
-Edit `.env` and fill in:
+Edit the `.env` file in the project root and fill in:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/banking
 REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=your-secret-key-here
 
-# SMTP (OTP emails)
+# SMTP (OTP emails) — Gmail example
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your@gmail.com
-SMTP_PASSWORD=your-app-password
+SMTP_PASSWORD=your-app-password       # Gmail App Password, not normal password
 SMTP_FROM_EMAIL=your@gmail.com
 SMTP_FROM_NAME=ADX Bank
 
 # Frontend URL
 FRONTEND_URL=http://localhost:3000
 
-# OpenAI (AI assistant)
+# AI Provider Priority — left = highest, auto-fallback to next on failure
+AI_PROVIDER_PRIORITY=groq,openai,claude
+
+# Groq — FREE (console.groq.com → API Keys)
+GROQ_API_KEY=gsk_your-groq-api-key
+GROQ_MODEL=llama3-70b-8192
+
+# OpenAI — paid (platform.openai.com)
 OPENAI_API_KEY=sk-your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
+
+# Anthropic / Claude — paid (console.anthropic.com)
+ANTHROPIC_API_KEY=sk-ant-your-key
+CLAUDE_MODEL=claude-haiku-4-5-20251001
 ```
+
+> Gmail App Password: Google Account → Security → 2-Step Verification → App Passwords
 
 ---
 
@@ -529,7 +594,6 @@ docker run -d \
 
 **Option B — Native PostgreSQL:**
 ```bash
-# Create the database
 createdb banking
 ```
 
@@ -593,6 +657,7 @@ On startup the server will:
 ```bash
 cd ../banking-frontend
 npm install
+echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8000" > .env.local
 npm run dev
 ```
 Frontend runs at **http://localhost:3000**
@@ -620,10 +685,20 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{"full_name":"Test User","email":"test@example.com","phone":"9999999999","password":"Test@1234","salary":50000}'
 
-# (Check email for OTP, then:)
+# Verify email (check inbox for OTP, then:)
 curl -X POST http://localhost:8000/api/v1/auth/verify-email \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","otp":"<otp>"}'
+
+# Login
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"test@example.com","password":"Test@1234"}'
+
+# Verify login OTP (check inbox, then:)
+curl -X POST http://localhost:8000/api/v1/auth/verify-login-otp \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"test@example.com","otp":"<otp>"}'
 ```
 
 ---

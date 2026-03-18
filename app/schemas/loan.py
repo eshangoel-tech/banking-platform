@@ -4,18 +4,44 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.config.bank_rules.bank_rules import (
+    LOAN_ALLOWED_TENURES,
+    LOAN_MIN_AMOUNT,
+)
+
+_ALLOWED_TENURES = LOAN_ALLOWED_TENURES
+_DEFAULT_TENURE = _ALLOWED_TENURES[0]  # 6
 
 
 class LoanEligibilityResponse(BaseModel):
+    min_loan_amount: str
     max_eligible_amount: str
+    existing_loan_outstanding: str
+    available_loan_amount: str
+    allowed_tenures: List[int]
     interest_rate: str
-    max_tenure_months: int
+    processing_fee_percent: int
 
 
 class LoanSimulateRequest(BaseModel):
-    amount: Decimal = Field(..., gt=0, description="Loan principal in INR")
-    tenure_months: int = Field(..., ge=1, le=24, description="Tenure in months (1–24)")
+    amount: Decimal = Field(
+        default=Decimal(str(LOAN_MIN_AMOUNT)),
+        ge=LOAN_MIN_AMOUNT,
+        description=f"Loan principal in INR (min ₹{LOAN_MIN_AMOUNT})",
+    )
+    tenure_months: int = Field(
+        default=_DEFAULT_TENURE,
+        description=f"Tenure in months — allowed values: {_ALLOWED_TENURES}",
+    )
+
+    @field_validator("tenure_months")
+    @classmethod
+    def tenure_must_be_allowed(cls, v: int) -> int:
+        if v not in _ALLOWED_TENURES:
+            raise ValueError(f"tenure_months must be one of {_ALLOWED_TENURES}")
+        return v
 
 
 class LoanSimulateResponse(BaseModel):
@@ -27,8 +53,22 @@ class LoanSimulateResponse(BaseModel):
 
 
 class LoanBookRequest(BaseModel):
-    amount: Decimal = Field(..., gt=0, description="Loan principal in INR")
-    tenure_months: int = Field(..., ge=1, le=24, description="Tenure in months (1–24)")
+    amount: Decimal = Field(
+        default=Decimal(str(LOAN_MIN_AMOUNT)),
+        ge=LOAN_MIN_AMOUNT,
+        description=f"Loan principal in INR (min ₹{LOAN_MIN_AMOUNT})",
+    )
+    tenure_months: int = Field(
+        default=_DEFAULT_TENURE,
+        description=f"Tenure in months — allowed values: {_ALLOWED_TENURES}",
+    )
+
+    @field_validator("tenure_months")
+    @classmethod
+    def tenure_must_be_allowed(cls, v: int) -> int:
+        if v not in _ALLOWED_TENURES:
+            raise ValueError(f"tenure_months must be one of {_ALLOWED_TENURES}")
+        return v
 
 
 class LoanBookResponse(BaseModel):
@@ -55,6 +95,18 @@ class LoanItem(BaseModel):
 
 class LoanListResponse(BaseModel):
     loans: List[LoanItem]
+
+
+class LoanPayInitiateResponse(BaseModel):
+    pay_id: str
+    emi_amount: str
+    outstanding_amount: str
+    message: str
+
+
+class LoanPayConfirmRequest(BaseModel):
+    pay_id: str
+    otp: str = Field(..., min_length=6, max_length=6)
 
 
 class LoanPayResponse(BaseModel):

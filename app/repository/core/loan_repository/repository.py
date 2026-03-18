@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repository.models.account import Account
@@ -96,6 +96,19 @@ class LoanRepository:
             .order_by(Loan.created_at.desc())
         )
         return list(res.scalars().all())
+
+    async def get_total_outstanding_by_user(
+        self, db: AsyncSession, user_id: UUID
+    ) -> Decimal:
+        """Sum of outstanding_amount for all ACTIVE + PENDING loans of a user."""
+        res = await db.execute(
+            select(func.coalesce(func.sum(Loan.outstanding_amount), 0))
+            .where(
+                Loan.user_id == user_id,
+                Loan.status.in_(["ACTIVE", "PENDING"]),
+            )
+        )
+        return Decimal(str(res.scalar_one()))
 
     async def update_loan_outstanding(
         self,
@@ -236,3 +249,52 @@ class LoanRepository:
             .values(status="VERIFIED")
         )
         await db.flush()
+
+    async def create_emi_pay_otp(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: UUID,
+        otp_hash: str,
+        expires_at: datetime,
+        pay_id: UUID,
+        max_attempts: int = 3,
+    ) -> OtpVerification:
+        """Create a LOAN_PAY OTP linked to a pay session via reference_id."""
+        otp = OtpVerification(
+            user_id=user_id,
+            otp_hash=otp_hash,
+            otp_type="LOAN_PAY",
+            attempts=0,
+            max_attempts=max_attempts,
+            expires_at=expires_at,
+            status="PENDING",
+            reference_id=pay_id,
+        )
+        db.add(otp)
+        await db.flush()
+        return otp
+
+    async def get_valid_emi_pay_otp(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: UUID,
+        pay_id: UUID,
+        now: datetime,
+    ) -> Optional[OtpVerification]:
+        """Return active PENDING LOAN_PAY OTP for this user+pay_id, or None if absent/expired."""
+        res = await db.execute(
+            select(OtpVerification)
+            .where(
+                OtpVerification.user_id == user_id,
+                OtpVerification.otp_type == "LOAN_PAY",
+                OtpVerification.status == "PENDING",
+                OtpVerification.reference_id == pay_id,
+            )
+            .order_by(OtpVerification.created_at.desc())
+        )
+        otp = res.scalar_one_or_none()
+        if otp is None or otp.expires_at < now:
+            return None
+        return otp

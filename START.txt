@@ -1,0 +1,196 @@
+================================================================
+         ADX BANK - PROJECT STARTUP GUIDE
+================================================================
+
+ZAROORAT KYA HAI (Prerequisites)
+----------------------------------
+- Python 3.11+
+- PostgreSQL (running + ek database bana lo, e.g. "banking")
+- Redis (running on localhost:6379)
+- SMTP credentials (Gmail app password ya koi bhi SMTP)
+- AI API key — Groq (FREE), OpenAI, ya Anthropic/Claude mein se koi ek
+
+
+STEP 1 - .env FILE SETUP
+--------------------------
+Project root mein .env file banao (agar nahi hai):
+
+Fill in these values in the existing .env file:
+
+    APP_NAME=banking-platform
+    ENV=local
+    DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@localhost:5432/banking
+    REDIS_URL=redis://localhost:6379/0
+    JWT_SECRET=koi_bhi_secret_string_likho
+
+    # SMTP (Gmail example)
+    SMTP_HOST=smtp.gmail.com
+    SMTP_PORT=587
+    SMTP_USER=tumhara@gmail.com
+    SMTP_PASSWORD=gmail_app_password
+    SMTP_FROM_EMAIL=tumhara@gmail.com
+    SMTP_FROM_NAME=ADX Bank
+
+    # AI Provider Priority (left = highest priority, auto fallback)
+    AI_PROVIDER_PRIORITY=groq,openai,claude
+
+    # Groq — FREE (console.groq.com → API Keys → Create)
+    GROQ_API_KEY=gsk_...
+    GROQ_MODEL=llama3-70b-8192
+
+    # OpenAI — paid (platform.openai.com)
+    OPENAI_API_KEY=sk-...
+    OPENAI_MODEL=gpt-4o-mini
+
+    # Anthropic/Claude — paid (console.anthropic.com)
+    ANTHROPIC_API_KEY=sk-ant-...
+    CLAUDE_MODEL=claude-haiku-4-5-20251001
+
+NOTE: Gmail app password ke liye:
+  Google Account → Security → 2-Step Verification → App Passwords
+
+
+STEP 2 - VIRTUAL ENVIRONMENT + DEPENDENCIES
+--------------------------------------------
+    cd /home/eshan/banking-platform
+
+    python -m venv venv
+    source venv/bin/activate          # Linux/Mac
+    # ya Windows pe: venv\Scripts\activate
+
+    pip install -r requirements.txt
+
+
+STEP 3 - DATABASE MIGRATIONS
+------------------------------
+PostgreSQL mein "banking" naam ka database pehle bana lo:
+
+    psql -U postgres -c "CREATE DATABASE banking;"
+
+Phir Alembic se tables create karo:
+
+    alembic upgrade head
+
+
+STEP 4 - CELERY WORKER START KARO (alag terminal mein)
+-------------------------------------------------------
+    cd /home/eshan/banking-platform
+    source venv/bin/activate
+
+    celery -A app.config.celery worker --loglevel=info
+
+NOTE: Redis ka running hona ZAROORI hai Celery ke liye.
+      Celery joining bonus aur salary credit ke background tasks chalata hai.
+
+
+STEP 5 - BACKEND SERVER START KARO
+-------------------------------------
+    cd /home/eshan/banking-platform
+    source venv/bin/activate
+
+    uvicorn app.main:app --reload --port 8000
+
+Server start hone ke baad:
+  - API:      http://localhost:8000
+  - Docs:     http://localhost:8000/docs       (Swagger UI)
+  - ReDoc:    http://localhost:8000/redoc
+  - Health:   http://localhost:8000/health
+
+
+STEP 6 - FRONTEND START KARO (optional, alag terminal mein)
+-------------------------------------------------------------
+    cd /home/eshan/banking-frontend
+
+    # Pehli baar setup:
+    npm install
+
+    # .env.local mein backend URL set karo:
+    echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8000" > .env.local
+
+    npm run dev
+
+Frontend: http://localhost:3000
+
+
+================================================================
+QUICK REFERENCE - IMPORTANT ENDPOINTS
+================================================================
+
+AUTH:
+  POST /api/v1/auth/register          - New user register
+  POST /api/v1/auth/verify-email      - OTP verify (email activate)
+  POST /api/v1/auth/login             - Login (password check)
+  POST /api/v1/auth/verify-login-otp  - Login OTP verify (JWT milta hai)
+  POST /api/v1/auth/forgot-password   - Password reset link
+  POST /api/v1/auth/reset-password    - Naya password set karo
+
+BANKING (JWT required in header: Authorization: Bearer <token>):
+  GET  /api/v1/dashboard/summary      - Dashboard
+  GET  /api/v1/account/details        - Account info
+  GET  /api/v1/transactions           - Transaction history
+  PUT  /api/v1/user/profile           - Profile update
+
+TRANSFER:
+  POST /api/v1/transfer/initiate      - Transfer shuru karo (OTP bhejta hai)
+  POST /api/v1/transfer/confirm       - OTP verify karke transfer complete
+
+WALLET:
+  POST /api/v1/wallet/add-money/initiate  - Add money shuru karo
+  POST /api/v1/wallet/add-money/confirm   - OTP verify karke credit
+
+LOANS:
+  GET  /api/v1/loan/eligibility       - Loan eligibility check
+  POST /api/v1/loan/simulate          - EMI calculate karo
+  GET  /api/v1/loan/eligibility       - Loan eligibility check
+  POST /api/v1/loan/simulate          - EMI calculate karo
+  POST /api/v1/loan/book              - Loan book karo (OTP)
+  POST /api/v1/loan/confirm           - OTP verify karke loan approve
+  GET  /api/v1/loan/list              - Mere loans dekho
+  POST /api/v1/loan/{loan_id}/pay     - EMI pay karo
+
+AI ASSISTANT:
+  POST /api/v1/ai/assistant/start     - Chat session shuru karo
+  POST /api/v1/ai/assistant/chat      - Message bhejo
+  POST /api/v1/ai/assistant/stop      - Session band karo
+
+
+================================================================
+TROUBLESHOOTING
+================================================================
+
+1. "Connection refused" on PostgreSQL:
+   - PostgreSQL service start hai? → sudo service postgresql start
+
+2. "Connection refused" on Redis:
+   - Redis start hai? → sudo service redis-server start
+   - Ya: redis-server (manually chalao)
+
+3. Email nahi aa raha:
+   - SMTP settings check karo .env mein
+   - Gmail use kar rahe ho? App Password chahiye, normal password nahi
+   - Email error se server crash nahi karta, sirf log mein error aata hai
+
+4. Alembic error "relation already exists":
+   - alembic stamp head   (agar DB pehle se bana hua hai)
+
+5. ChromaDB / sentence-transformers slow first time:
+   - Pehli baar model download hota hai (~100MB), wait karo
+
+6. Celery worker nahi chal raha:
+   - Redis connection check karo
+   - REDIS_URL .env mein sahi hai?
+
+================================================================
+TECH STACK SUMMARY
+================================================================
+
+Backend:   FastAPI + Python + Uvicorn
+Database:  PostgreSQL (async via asyncpg + SQLAlchemy 2.0)
+Cache:     Redis
+Queue:     Celery (background tasks)
+Security:  bcrypt (passwords) + JWT (sessions) + SHA256 (OTP)
+Email:     aiosmtplib (async SMTP)
+AI:        Groq / OpenAI / Claude (priority fallback) + LangChain + ChromaDB (RAG)
+Frontend:  Next.js 14 (TypeScript + TailwindCSS)
+
+================================================================

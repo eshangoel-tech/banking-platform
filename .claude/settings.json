@@ -16,7 +16,11 @@
       "Bash(grep -E \"\\\\.\\(py|json|txt\\)$\")",
       "Bash(python3 -m py_compile app/services/ai/context_fetch.py)",
       "Bash(python3 -m py_compile app/services/ai/assistant_service.py)",
-      "Bash(python3 -m py_compile app/ai_agents/assistant/agent.py)"
+      "Bash(python3 -m py_compile app/ai_agents/assistant/agent.py)",
+      "Bash(sudo service:*)",
+      "Bash(pg_isready)",
+      "Bash(sudo -u postgres psql -c \"CREATE USER eshan WITH SUPERUSER;\")",
+      "Bash(sudo -u postgres psql -c \"CREATE DATABASE banking OWNER eshan;\")"
     ],
     "additionalDirectories": [
       "/home/eshan/banking-platform",

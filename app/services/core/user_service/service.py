@@ -201,6 +201,16 @@ class UserService:
     # Profile update
     # ------------------------------------------------------------------
 
+    async def get_profile(self, user: User) -> dict:
+        return {
+            "full_name": user.full_name,
+            "email": user.email,
+            "phone": user.phone,
+            "salary": str(user.salary) if user.salary else None,
+            "kyc_status": user.kyc_status,
+            "address": user.address,  # already a dict (JSONB)
+        }
+
     async def update_profile(
         self,
         db: AsyncSession,
@@ -208,7 +218,7 @@ class UserService:
         user: User,
         session_id: UUID,
         phone: Optional[str],
-        address: Optional[str],
+        address: Optional[dict],
     ) -> None:
         phone_changed = phone is not None and phone != user.phone
         address_changed = address is not None

@@ -29,7 +29,8 @@ async def initiate_transfer(
         db,
         user=auth.user,
         session_id=auth.session_id,
-        receiver_account_number=payload.receiver_account_number,
+        to_account_number=payload.to_account_number,
+        to_phone=payload.to_phone,
         amount=payload.amount,
     )
     return ok_response(request, "OTP sent for transfer confirmation.", data=data)

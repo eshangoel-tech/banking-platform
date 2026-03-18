@@ -53,7 +53,10 @@ You are the voice the customer hears — make every response feel human and help
 - Empathise with problems: "I understand that can be frustrating…"
 - Never use raw JSON field names, agent names, or technical jargon in the response.
 
-Output ONLY valid JSON with exactly these two keys:
+CRITICAL INSTRUCTION — OUTPUT FORMAT:
+- Output ONLY a raw JSON object. No prose, no preamble, no explanation before or after.
+- Start your response with {{ and end with }}. Nothing else.
+
 {{
   "response": "<final natural language reply to the customer>",
   "actions" : [
@@ -88,6 +91,7 @@ def combine_responses(
     user_message: str,
     agent_responses: list[AgentResponse],
     receptionist_tasks: list[ReceptionistTask],
+    chat_history: list[dict] | None = None,
 ) -> tuple[str, list[dict], LLMCallResult]:
     """
     Combine domain-agent responses and handle direct receptionist tasks.
@@ -110,6 +114,15 @@ def combine_responses(
 
     # --- Build the input for the receptionist LLM ---
     parts: list[str] = []
+
+    # Include recent chat history so the receptionist can understand confirmations ("yes", "sure")
+    if chat_history:
+        history_lines: list[str] = []
+        for turn in chat_history[-6:]:
+            history_lines.append(f"User: {turn.get('user_message', '')}")
+            history_lines.append(f"Assistant: {turn.get('assistant_response', '')}")
+        if history_lines:
+            parts.append("Recent conversation history:\n" + "\n".join(history_lines))
 
     if agent_responses:
         agent_lines = [

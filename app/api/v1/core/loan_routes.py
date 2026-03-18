@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.core.auth_dependency import AuthContext, get_current_user
 from app.repository.session import get_db
-from app.schemas.loan import LoanBookRequest, LoanConfirmRequest, LoanSimulateRequest
+from app.schemas.loan import (
+    LoanBookRequest,
+    LoanConfirmRequest,
+    LoanPayConfirmRequest,
+    LoanSimulateRequest,
+)
 from app.common.responses import ok_response
 from app.services.core.loan_service.service import LoanService
 
@@ -136,28 +141,59 @@ async def list_loans(
 
 
 # ---------------------------------------------------------------------------
-# POST /loan/{loan_id}/pay
+# POST /loan/{loan_id}/pay/initiate  — Step 1: send OTP
 # ---------------------------------------------------------------------------
 
-@router.post("/{loan_id}/pay")
-async def pay_loan(
+@router.post("/{loan_id}/pay/initiate")
+async def initiate_pay_loan(
     request: Request,
     loan_id: UUID,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Pay one EMI instalment for an active loan.
+    Step 1 of EMI payment: validate loan/balance, store pay session in Redis
+    (5-min TTL), and send a 6-digit OTP to the user's email.
 
-    Deducts min(emi_amount, outstanding_amount) from the wallet balance,
-    creates a DEBIT ledger entry, and closes the loan when outstanding
-    reaches zero.
+    Returns pay_id — pass it with the OTP to /pay/confirm.
     """
     service = LoanService()
-    data = await service.pay_loan(
+    data = await service.initiate_pay_loan(
         db,
         user=auth.user,
         session_id=auth.session_id,
         loan_id=loan_id,
     )
-    return ok_response(request, "Loan payment successful.", data=data)
+    return ok_response(request, data["message"], data={
+        "pay_id": data["pay_id"],
+        "emi_amount": data["emi_amount"],
+        "outstanding_amount": data["outstanding_amount"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# POST /loan/{loan_id}/pay/confirm  — Step 2: verify OTP and process payment
+# ---------------------------------------------------------------------------
+
+@router.post("/{loan_id}/pay/confirm")
+async def confirm_pay_loan(
+    request: Request,
+    loan_id: UUID,
+    payload: LoanPayConfirmRequest,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Step 2 of EMI payment: verify OTP, debit account, create ledger entry,
+    and close the loan if fully repaid.
+    """
+    service = LoanService()
+    data = await service.confirm_pay_loan(
+        db,
+        user=auth.user,
+        session_id=auth.session_id,
+        loan_id=loan_id,
+        pay_id=payload.pay_id,
+        otp=payload.otp,
+    )
+    return ok_response(request, "Loan EMI payment successful.", data=data)

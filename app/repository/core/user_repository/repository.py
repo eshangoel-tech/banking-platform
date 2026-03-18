@@ -68,7 +68,7 @@ class UserRepository:
         user_id: UUID,
         *,
         phone: Optional[str] = None,
-        address: Optional[str] = None,
+        address: Optional[dict] = None,
     ) -> None:
         values: dict = {}
         if phone is not None:
