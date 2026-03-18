@@ -55,7 +55,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - chroma_data:/app/chroma_data   # persist vector store
+      - chroma_data:/app/chroma_data
+      - hf_cache:/app/.cache/huggingface
     environment:
       GUNICORN_WORKERS: 2
 
@@ -74,7 +75,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - chroma_data:/app/chroma_data   # share same vector store as api
+      - chroma_data:/app/chroma_data
+      - hf_cache:/app/.cache/huggingface
 
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
@@ -82,3 +84,4 @@ volumes:
   postgres_data:
   redis_data:
   chroma_data:
+  hf_cache:
