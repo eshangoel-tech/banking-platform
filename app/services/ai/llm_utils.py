@@ -157,10 +157,11 @@ def call_llm(
 
 def _strip_json_fences(raw: str) -> str:
     """
-    Extract a JSON object from LLM output, handling:
+    Extract a JSON object or array from LLM output, handling:
     - Markdown code fences (```json ... ```)
     - Preamble text before the JSON (e.g. "Here is the response: {...}")
     - Trailing text after the JSON
+    - Both JSON objects {...} and JSON arrays [...]
     """
     import re
 
@@ -174,12 +175,12 @@ def _strip_json_fences(raw: str) -> str:
             inner = inner[4:]
         raw = inner.strip()
 
-    # 2. If it's already valid JSON, return as-is
-    if raw.startswith("{"):
+    # 2. If it's already valid JSON (object or array), return as-is
+    if raw.startswith("{") or raw.startswith("["):
         return raw
 
-    # 3. Extract the first {...} block from the text (handles preamble/suffix)
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    # 3. Extract the first JSON array [...] or object {...} from the text
+    match = re.search(r'(\[.*\]|\{.*\})', raw, re.DOTALL)
     if match:
         return match.group(0)
 

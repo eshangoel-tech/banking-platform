@@ -62,11 +62,12 @@ banking-platform/
 - Credits account with `WALLET_TOPUP` ledger entry
 
 ### Loans (`/api/v1/loan`)
-- Eligibility check — accounts for **existing outstanding loans**
+- Eligibility check — accounts for existing outstanding loans. 1% processing fee on principal.
 - EMI simulator
 - Book → OTP confirm → Celery auto-approves → principal credited to account
 - **Pay EMI is OTP-secured**: initiate → OTP → confirm
 - Loan closes when outstanding reaches zero
+- **Foreclosure**: zero prepayment / foreclosure penalty — pay `outstanding_amount` anytime
 
 ### AI Assistant (`/api/v1/ai/assistant`)
 Three-layer multi-agent pipeline:
@@ -79,6 +80,7 @@ Features:
 - Multi-provider AI with automatic fallback: Groq → OpenAI → Claude
 - RAG pipeline over bank rules + policies (ChromaDB)
 - Dev terminal pipeline trace with agent timings + token counts
+- Agents use customer's live data directly — never ask for info already in context
 
 ## Background Tasks (Celery + Redis)
 

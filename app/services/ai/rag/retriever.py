@@ -25,11 +25,15 @@ def _retrieve(collection_name: str, query: str, top_k: int = 3) -> list[str]:
     """
     try:
         collection = get_collection(collection_name)
+        count = collection.count()
+        if count == 0:
+            logger.warning("Collection '%s' is empty — skipping RAG retrieval", collection_name)
+            return []
         query_embedding = embed_query(query)
 
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(top_k, collection.count()),
+            n_results=min(top_k, count),
             include=["documents", "metadatas", "distances"],
         )
 

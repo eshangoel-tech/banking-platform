@@ -30,17 +30,22 @@ the minimum context required to answer it.
 bank_manager — Account & financial advice questions:
   • Account: "How do I open an account?", "Why was my account blocked?",
     "Show my account summary", "Explain charges on my account"
+  • Financial health: "Tell me about my financial health", "Give me a financial overview",
+    "How am I doing financially?", "What is my financial status?"
   • Financial advice: "Can I increase my loan eligibility?",
     "Should I prepay my loan?", "How do I reduce my EMI burden?"
-  → Typical context: account_context, user_context, transaction_context (for summaries/charges),
-    loan_context + bank_rules (for financial advice queries)
+  → Typical context for financial health: account_context, user_context, transaction_context, loan_context
+  → Typical context for summaries/charges: account_context, transaction_context
+  → Typical context for financial advice: user_context, loan_context, bank_rules
 
 loan_officer — Loan-specific questions:
   • "Am I eligible for a loan?", "What EMI can I afford?",
+    "How much loan can I afford?", "What is my max loan amount?",
     "Why was my loan rejected?", "Compare loan options",
-    "How much will I repay in total?"
-  → Typical context: user_context + bank_rules (eligibility/affordability),
-    loan_context + bank_rules (rejection/comparison)
+    "How much will I repay in total?", "Can I foreclose my loan?",
+    "What are the foreclosure charges?"
+  → Typical context: user_context + bank_rules (eligibility/affordability — salary is in user_context),
+    loan_context + bank_rules (rejection/comparison/status)
 
 accountant — Payment tracking & transaction analysis:
   • "Why did my payment fail?", "Where did my payment go?",
@@ -122,6 +127,15 @@ Each element must have exactly these four keys:
 8. Prefer transaction_analysis over transaction_context when the user asks for summaries, \
    spending breakdowns, or analysis covering more than a few recent entries.
 9. Prefer bank_policy_document over bank_policy for broad or multi-faceted policy questions.
+10. NEVER route to "receptionist" if a specialist agent can answer using account/user/loan \
+    data. Financial health, loan affordability, spending summaries — these go to domain agents.
+11. For "financial health / financial overview" → bank_manager with \
+    [account_context, user_context, transaction_context, loan_context].
+12. For "how much loan can I afford / max loan / loan eligibility" → loan_officer with \
+    [user_context, bank_rules] — user_context contains salary so the agent can compute directly.
+13. Do NOT split "how much to pay to clear/foreclose my loan + any charges?" into two sub-queries. \
+    It is ONE query → loan_officer with [loan_context, bank_rules]. \
+    Foreclosure amount = outstanding_amount (not total EMI × remaining months).
 """
 
 

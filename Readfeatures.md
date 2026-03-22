@@ -303,7 +303,7 @@ Returns all loan constraints. **Existing active/pending loans reduce the availab
     "available_loan_amount": "450000.00",
     "allowed_tenures": [6, 12, 18, 24, 36, 48],
     "interest_rate": "12.00",
-    "processing_fee_percent": 0
+    "processing_fee_percent": 1
   }
 }
 ```
@@ -510,9 +510,12 @@ POST /api/v1/ai/assistant/chat
 | Question type | Agent |
 |---|---|
 | Account balance, summary, blocked account | bank_manager |
-| Loan eligibility, EMI calculation, outstanding | loan_officer |
+| Financial health overview, financial summary | bank_manager |
+| Loan eligibility, EMI calculation, outstanding balance | loan_officer |
+| Foreclosure / pay off loan now, foreclosure charges | loan_officer |
 | Payment failed, spending analysis, transaction history | accountant |
-| Interest rates, OTP not received, policy questions | support |
+| Interest rates, fees, OTP not received, policy questions | support |
+| Foreclosure policy, prepayment rules, bank charges | support |
 | Greetings, "yes" to redirect, unclear text | receptionist |
 
 **Redirect actions:**
@@ -531,6 +534,11 @@ POST /api/v1/ai/assistant/chat
 
 **Multi-provider AI fallback:**
 The system tries providers left-to-right from `AI_PROVIDER_PRIORITY`. If Groq fails (quota/network), it falls back to OpenAI, then Claude. All providers share the same `call_llm()` interface.
+
+**Agent behaviour notes:**
+- All domain agents use the customer's data from context directly — they never ask for information they already have (salary, balance, outstanding, etc.)
+- Foreclosure amount = `outstanding_amount` (reducing-balance amount owed today), not `EMI × remaining months`
+- Support agent has key policy facts baked in (foreclosure = zero charge, fees, limits) so it answers correctly even when RAG retrieval returns no chunks
 
 ---
 
