@@ -52,7 +52,7 @@ NOTE: Gmail app password ke liye:
 
 STEP 2 - VIRTUAL ENVIRONMENT + DEPENDENCIES
 --------------------------------------------
-    cd /home/eshan/banking-platform
+    cd banking-platform
 
     python -m venv venv
     source venv/bin/activate          # Linux/Mac
@@ -74,7 +74,7 @@ Phir Alembic se tables create karo:
 
 STEP 4 - CELERY WORKER START KARO (alag terminal mein)
 -------------------------------------------------------
-    cd /home/eshan/banking-platform
+    cd banking-platform
     source venv/bin/activate
 
     celery -A app.config.celery worker --loglevel=info
@@ -85,7 +85,7 @@ NOTE: Redis ka running hona ZAROORI hai Celery ke liye.
 
 STEP 5 - BACKEND SERVER START KARO
 -------------------------------------
-    cd /home/eshan/banking-platform
+    cd banking-platform
     source venv/bin/activate
 
     uvicorn app.main:app --reload --port 8000
@@ -99,7 +99,7 @@ Server start hone ke baad:
 
 STEP 6 - FRONTEND START KARO (optional, alag terminal mein)
 -------------------------------------------------------------
-    cd /home/eshan/banking-frontend
+    cd banking-frontend
 
     # Pehli baar setup:
     npm install
